@@ -1,348 +1,390 @@
-"""3×3 等角四边形网格（9 面全等，论文 Example 3）刚性折叠动画 v2。
+"""Spatial 3x3 folding with quarter-turned corner rhombi and hinged squares."""
 
-v2 改动（相对 v1）：
-- 完整 3×3：中心面 + 4 边中面 + 4 角面，共 9 个全等面
-- 边中面拼法：中心面绕其质心旋转 180°（整个面反过来），再平移拼接——
-  共享边位置不动，共享边两端的面顶角互换（交叉配对）。
-  例如左侧面的上边 = 中心面的下边（同为 60°-105° 那条边）
-- 角面：两条相邻边中面的外边端点 + 圆交确定的第 4 角闭合，
-  平铺状态 4 个中心顶点处 4 面角度和恰为 360°
-- 折叠：二面角大小走 Bricard 分支 k1·K2·k3·K4（α1 驱动 0→178°），
-  方向：上侧 T 朝下叠、下侧 B 朝上叠，L/R 朝下叠；
-  角面每帧用三点刚性配准跟随两个相邻边中面，保证所有共边全程贴合不断开
-- v5 修复：角面为保逆时针可能交换 A/B 角序（TL/TR 两个角面被翻转），三点配准
-  与角点归属一律按平铺坐标匹配 A/B 的真实索引，否则这两个角面在折叠初期被
-  近 180° 翻转渲染（视觉上"先变大"）
-- v4 共边修复：每个角点的厚度偏移按其归属面法向取——中心 4 角点属中心面
-  （偏移恒为 t/2·ẑ，折叠中不动），外边共享角点属所在边中面；相邻面板在
-  共边上的顶边、底边、厚度侧面完全相同，12 条共边及全部角点全程精确贴合
-"""
-import numpy as np
+import argparse
+from itertools import product
+from pathlib import Path
+
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+import numpy as np
+from matplotlib.animation import FuncAnimation, PillowWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 
-# ---------- 基础工具 ----------
-def R(axis, angle):
-    """绕任意单位轴 axis 旋转 angle（右手定则）的旋转矩阵。"""
-    a = np.asarray(axis, float)
-    a = a / np.linalg.norm(a)
-    x, y, z = a
-    c, s = np.cos(angle), np.sin(angle)
-    C = 1 - c
-    return np.array([[c + x * x * C, x * y * C - z * s, x * z * C + y * s],
-                     [y * x * C + z * s, c + y * y * C, y * z * C - x * s],
-                     [z * x * C - y * s, z * y * C + x * s, c + z * z * C]])
+FACE_NAMES = ['C', 'T', 'L', 'B', 'R', 'TL', 'BL', 'BR', 'TR']
+COLORS = ['#5294cc'] + ['#efa64b'] * 4 + ['#5294cc'] * 4
+OUTPUT = Path(__file__).with_name('origami_grid3x3_rhombi_squares.gif')
+FOLD_RATIO = 2 - np.sqrt(3)
+INITIAL_ANGLE = np.degrees(2 * np.arctan(np.sqrt(FOLD_RATIO)))
+VIEW_ELEVATION = 40
+VIEW_AZIMUTH = -85
+VIEW_ZOOM = 1.16
 
 
-def norm(v):
-    v = np.asarray(v, float)
-    n = np.linalg.norm(v)
-    return v / n if n > 1e-12 else v
+def norm(vector):
+    """Normalize a nonzero vector."""
+    return vector / np.linalg.norm(vector)
 
 
-def darken(hex_color, factor=0.5):
-    h = hex_color.lstrip('#')
-    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    return f'#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}'
+def rotation(axis, angle):
+    """Right-handed rotation, with angle in radians."""
+    axis = norm(np.asarray(axis, float))
+    skew = np.array([[0, -axis[2], axis[1]],
+                     [axis[2], 0, -axis[0]],
+                     [-axis[1], axis[0], 0]])
+    return (np.cos(angle) * np.eye(3)
+            + (1 - np.cos(angle)) * np.outer(axis, axis)
+            + np.sin(angle) * skew)
 
 
-def circle_circle(A, B, rA, rB):
-    """以 A、B 为圆心、半径 rA、rB 的两圆交点，返回两个候选点。"""
-    dvec = B - A
-    d = np.linalg.norm(dvec)
-    x = (d * d + rA * rA - rB * rB) / (2 * d)
-    h = np.sqrt(max(rA * rA - x * x, 0.0))
-    base = A + x * dvec / d
-    perp = np.array([-dvec[1], dvec[0], 0.0]) / d
-    return base + h * perp, base - h * perp
+def frame(first, second):
+    """Orthonormal frame; mapping between frames preserves panel shape."""
+    tangent = norm(first)
+    normal = norm(np.cross(first, second))
+    return np.column_stack([tangent, np.cross(normal, tangent), normal])
 
 
-def rigid_from_points(x1, x2, y1, y2):
-    """旋转矩阵把 (x1, x2, x1×x2) 映射到 (y1, y2, y1×y2)。"""
-    X = np.column_stack([x1, x2, np.cross(x1, x2)])
-    Y = np.column_stack([y1, y2, np.cross(y1, y2)])
-    return Y @ np.linalg.inv(X)
+def panel_templates():
+    """Individual planar templates, not a connected coplanar configuration.
 
-
-# ---------- 圆内接四边形 ----------
-def cyclic_quad(lam_deg, circ_R=1.0):
-    """内角序列 lam_deg=[λ1..λ4]（逆时针，对角互补）→ 顶点 4×2（逆时针）。
-
-    相邻顶点间半圆心角 t_i 满足 λ_i = t_{i+1} + t_{i+2}（下标循环），
-    故 t1 = (λ3+λ4−λ2)/2，其余依次解出。v1 放在 135°（左上），
-    顶点按弧长 2t_i 前进。返回质心平移到原点的顶点。
+    Rotate each old corner rhombus exactly 90 degrees about its centroid,
+    then choose its nearest vertex as the central attachment. All five
+    rhombi now have parallel corresponding edges in this template layout.
+    Squares are placed in their zero-rotation reference planes only.
     """
-    lam = np.radians(lam_deg)
-    t1 = (lam[2] + lam[3] - lam[1]) / 2
-    t4 = lam[2] - t1
-    t3 = lam[1] - t4
-    t2 = lam[0] - t3
-    t = np.array([t1, t2, t3, t4])
-    theta = np.radians(135.0) + np.concatenate([[0.0], np.cumsum(2 * t)[:-1]])
-    q = circ_R * np.column_stack([np.cos(theta), np.sin(theta)])
-    return q - q.mean(axis=0)
+    down = np.array([0.0, -1.0, 0.0])
+    right = np.array([np.sqrt(3) / 2, -0.5, 0.0])
+    central = np.array([np.zeros(3), down, down + right, right])
+    central -= central.mean(axis=0)
+    panels = [central]
+    hinges = []
+    for index in range(4):
+        start, end = central[index], central[(index - 1) % 4]
+        direction = end - start
+        outward = np.array([-direction[1], direction[0], 0.0])
+        panels.append(np.array([start, end, end + outward, start + outward]))
+        hinges.append((start, norm(direction)))
+    quarter_turn = rotation([0, 0, 1], np.pi / 2)
+    for index in range(4):
+        vertex = central[index]
+        first_face, second_face = index + 1, (index + 1) % 4 + 1
+        first, second = panels[first_face][3], panels[second_face][2]
+        corner = np.array([vertex, first, first + second - vertex, second])
+        centroid = corner.mean(axis=0)
+        corner = (corner - centroid) @ quarter_turn.T + centroid
+        attachment = int(np.argmin(np.linalg.norm(corner - vertex, axis=1)))
+        panels.append(np.roll(corner, -attachment, axis=0))
+    return np.array(panels), hinges
 
 
-# ---------- 参数 ----------
-lam_deg = [75.0, 60.0, 105.0, 120.0]     # λ1..λ4（逆时针）
-lam = np.radians(lam_deg)
-gam = lam[[3, 0, 1, 2]]                  # γ_i = λ_{i-1}
-
-V = cyclic_quad(lam_deg)                 # V[i] 处内角 λ_{i+1}
-V3 = np.column_stack([V, np.zeros(4)])   # 3D（z=0 平面）
-lens = [np.linalg.norm(V3[(i + 1) % 4] - V3[i]) for i in range(4)]  # l1..l4
-
-# ---------- 边中面（R180 + 平移，交叉配对） ----------
-# 面 i（1..4）：铰链 = 中心边 (v_i, v_{i-1})，平移 t = v_i + v_{i-1}，
-# 角点 CCW = [−v3, −v4, −v1, −v2] + t（180° 旋转副本的标准角序）。
-edge = {}
-hinges = {}                              # i -> (铰链上一点 a, 铰链轴 u)
-for i in range(1, 5):
-    vi, vj = V3[i - 1], V3[(i - 2) % 4]
-    t = vi + vj
-    corners = np.array([-V3[2] + t, -V3[3] + t, -V3[0] + t, -V3[1] + t])
-    if np.cross(corners[1] - corners[0], corners[3] - corners[0])[2] < 0:
-        corners = corners[[0, 3, 2, 1]]  # 保证逆时针
-    edge[i] = corners
-    o = corners.mean(axis=0) - (vi + vj) / 2
-    u = norm(vj - vi)                                    # 铰链轴 = 共边方向
-    if np.dot(np.cross(u, o), [0.0, 0.0, 1.0]) < 0:
-        u = -u                                           # 正角抬向 +z
-    hinges[i] = (vi, u)
-
-# ---------- 角面（圆交闭合） ----------
-def corner_face(v, A, rA, B, rB):
-    """角面 = [v, A, C, B]（CCW），C 取两圆交点中离原点（中心面质心）较远者。"""
-    C1, C2 = circle_circle(A, B, rA, rB)
-    C = C1 if np.linalg.norm(C1) >= np.linalg.norm(C2) else C2
-    corners = np.array([v, A, C, B])
-    if np.cross(corners[1] - corners[0], corners[3] - corners[0])[2] < 0:
-        corners = corners[[0, 3, 2, 1]]
-    return corners
+TEMPLATES, HINGES = panel_templates()
 
 
-# 角面定义：中心顶点 v，A/B 分别是两个边中面的外边角点（(面号, 角点号)），
-# C 到 A/B 的距离 rA/rB（圆交半径）。
-corner_defs = [
-    (V3[0], 2, 0, lens[0], 1, 0, lens[3]),  # TL：A=f2[0](r=l1), B=f1[0](r=l4)
-    (V3[1], 2, 1, lens[0], 3, 1, lens[1]),  # BL：A=f2[1](r=l1), B=f3[1](r=l2)
-    (V3[2], 3, 2, lens[1], 4, 2, lens[2]),  # BR：A=f3[2](r=l2), B=f4[2](r=l3)
-    (V3[3], 1, 3, lens[3], 4, 3, lens[2]),  # TR：A=f1[3](r=l4), B=f4[3](r=l3)
-]
-corner = []
-corner_anchor_idx = []          # 每个角面中 A、B 的真实索引（角序可能被 CCW 翻转交换）
-for (v, iA, jA, rA, iB, jB, rB) in corner_defs:
-    face = corner_face(v, edge[iA][jA], rA, edge[iB][jB], rB)
-    corner.append(face)
-    idxA = int(np.argmin([np.linalg.norm(p - edge[iA][jA]) for p in face]))
-    idxB = int(np.argmin([np.linalg.norm(p - edge[iB][jB]) for p in face]))
-    corner_anchor_idx.append((idxA, idxB))
-
-faces_flat = [V3, edge[1], edge[2], edge[3], edge[4],
-              corner[0], corner[1], corner[2], corner[3]]
-# 索引：0=中心面，1..4=边中面（T/L/B/R），5..8=角面（TL/BL/BR/TR）
-
-# ---------- 折叠路径（Bricard 分支 k1·K2·k3·K4） ----------
-def fold_path(n_half=60, amax_deg=178.0):
-    """驱动 x1 = tan(α1/2)，α1: 0 → amax。返回 (n_half+1, 4) 的 α（度）。"""
-    k = (np.sin(gam) - np.sin(lam)) / np.sin(gam - lam)
-    K = (np.sin(gam) + np.sin(lam)) / np.sin(gam - lam)
-    a1 = np.linspace(0.0, amax_deg, n_half + 1)
-    x1 = np.tan(np.radians(a1) / 2)
-    x2 = k[0] * x1
-    x3 = K[1] * x2
-    x4 = k[2] * x3
-    close_err = np.max(np.abs(K[3] * x4 - x1))     # 闭链残差，应 ≈ 0
-    alphas = np.degrees(2 * np.arctan(np.stack([x1, x2, x3, x4], axis=1)))
-    return alphas, close_err
+def shared_edges():
+    """Twelve shared edges specified by topology, not by planar proximity."""
+    matches = []
+    for index in range(4):
+        first_face, second_face = index + 1, (index + 1) % 4 + 1
+        matches.append((0, [index, (index - 1) % 4], first_face, [0, 1]))
+        matches.append((index + 5, [0, 1], first_face, [0, 3]))
+        matches.append((index + 5, [0, 3], second_face, [1, 2]))
+    return matches
 
 
-# ---------- 面板（带厚度的薄板） ----------
-def quad_slab(corners, offsets, top_color, crease=(), hinge_color='#37474f'):
-    """把四边形 corners（4 个 3D 顶点，逆时针）建成带厚度的 8 顶点薄板。
+SHARED_EDGES = shared_edges()
 
-    offsets: 每个角点顶面偏移（顶面 = 中面角点 + off，底面 = 中面角点 − off）。
-    折痕边（crease）的厚度侧面用铰链色——相邻两块板在共边上生成完全相同的
-    顶边、底边与侧面，因此共边及其端点角在折叠全程精确贴合、永不分离。
+
+def fold_path(n_half=60, amax_deg=130.0, amin_deg=INITIAL_ANGLE):
+    """Noncoplanar closed branch after quarter-turning the corner templates.
+
+    The corner angle at each central vertex is now mu=lambda, instead of
+    mu=180-lambda. For adjacent half-angle tangents x,y this requires
+    cos(lambda) * (1 + (x*y)**2) - 2*x*y = 0.
+    One closed branch is (x_T,x_L,x_B,x_R)=(t,q/t,-t,-q/t),
+    q=2-sqrt(3). Reference rho=0 is the square's central-plane reference,
+    not a realizable flat configuration of the assembled nine panels.
     """
-    top = [np.asarray(c) + np.asarray(o) for c, o in zip(corners, offsets)]
-    bot = [np.asarray(c) - np.asarray(o) for c, o in zip(corners, offsets)]
-    verts = top + bot
-    faces = [[0, 1, 2, 3], [4, 5, 6, 7]]
-    colors = [top_color, top_color]
-    for i in range(4):
-        j = (i + 1) % 4
-        faces.append([i, j, j + 4, i + 4])
-        colors.append(hinge_color if i in crease else darken(top_color))
-    return np.array(verts), faces, colors
+    if n_half < 2 or not 0 < amin_deg < amax_deg < 180:
+        raise ValueError('Need n_half >= 2 and 0 < min-angle < max-angle < 180 degrees.')
+    progress = np.linspace(0, 1, n_half + 1)
+    drive = np.radians(amin_deg + (amax_deg - amin_deg)
+                       * (1 - np.cos(np.pi * progress)) / 2)
+    tangent = np.tan(drive / 2)
+    half_tangents = np.column_stack([tangent, FOLD_RATIO / tangent,
+                                    -tangent, -FOLD_RATIO / tangent])
+    return np.degrees(2 * np.arctan(half_tangents))
 
 
-thickness = 0.06                          # 面板厚度
-# 棋盘配色：中心面与 4 个角面深蓝，4 个边中面浅蓝
-palettes = {0: '#0d47a1', 1: '#1565c0', 2: '#1565c0', 3: '#1565c0',
-            4: '#1565c0', 5: '#0d47a1', 6: '#0d47a1', 7: '#0d47a1',
-            8: '#0d47a1'}
+def folded_faces(rotations):
+    """Rotate squares around C and rigidly place each corner rhombus."""
+    current = [TEMPLATES[0].copy()]
+    for index, (origin, axis) in enumerate(HINGES):
+        transform = rotation(axis, np.radians(rotations[index]))
+        current.append((TEMPLATES[index + 1] - origin) @ transform.T + origin)
+    residual = 0.0
+    for index in range(4):
+        first_face, second_face = index + 1, (index + 1) % 4 + 1
+        origin = TEMPLATES[0, index]
+        original = TEMPLATES[index + 5]
+        source_origin = original[0]
+        first_target, second_target = current[first_face][3], current[second_face][2]
+        original_frame = frame(original[1] - source_origin, original[3] - source_origin)
+        target_frame = frame(first_target - origin, second_target - origin)
+        transform = target_frame @ original_frame.T
+        corner = (original - source_origin) @ transform.T + origin
+        residual = max(residual, np.linalg.norm(corner[1] - first_target),
+                       np.linalg.norm(corner[3] - second_target),
+                       np.max(np.abs(transform.T @ transform - np.eye(3))))
+        current.append(corner)
+    return np.array(current), residual
 
 
-def build_mesh(alphas):
-    """由 4 个二面角（度）构造 9 块面板，返回 (顶点, 面, 颜色, 配准残差)。
+def face_stats(points):
+    """Cyclic edge lengths and interior angles in degrees."""
+    previous = np.roll(points, 1, axis=0) - points
+    following = np.roll(points, -1, axis=0) - points
+    lengths = np.linalg.norm(following, axis=1)
+    cosines = np.sum(previous * following, axis=1) / (
+        np.linalg.norm(previous, axis=1) * lengths)
+    return lengths, np.degrees(np.arccos(np.clip(cosines, -1, 1)))
 
-    共边贴合方案：每个角点的厚度偏移按「归属面」的法向取——中心 4 个角点
-    属于中心面，偏移恒为 t/2·ẑ，折叠中纹丝不动（例如左面的右上角与中心面
-    的左上角始终是同一个点）；外边共享角点属于所在边中面，相邻两块板用
-    同一个偏移，顶角、底角逐点重合；每条折痕的厚度侧面（铰链色）两块板
-    完全相同。因此 12 条共边及全部角点全程精确贴合、永不分离。
+
+def spatial_metrics(panels):
+    """Height and smaller angles between square planes and the central plane."""
+    normals = np.cross(panels[:, 1] - panels[:, 0], panels[:, 3] - panels[:, 0])
+    normals /= np.linalg.norm(normals, axis=1)[:, None]
+    tilts = np.degrees(np.arccos(np.clip(np.abs(normals[1:5] @ normals[0]), 0, 1)))
+    return np.ptp(panels[:, :, 2]), tilts
+
+
+def audit_branches():
+    """Enumerate regular labelled algebraic branches, modulo rho -> -rho.
+
+    Products p_i=x_i*x_(i+1) have roots (+q,-q,+q,-q) or their
+    corresponding reciprocals. Loop closure requires p_0*p_2=p_1*p_3.
+    This counts algebraic assembly branches, not collision-free global
+    motions or equivalence classes under relabelling the panels.
     """
-    # 中心面固定，边中面绕各自铰链旋转
-    cur = [faces_flat[0]]
-    normals = [np.array([0.0, 0.0, 1.0])]
-    for i in range(1, 5):
-        a, u = hinges[i]
-        mag = abs(alphas[i - 1])                    # 二面角大小（Bricard 分支）
-        ang = np.radians(mag if i == 3 else -mag)   # 上侧 T 下叠、下侧 B 上叠，L/R 下叠
-        cur.append(np.array([a + R(u, ang) @ (p - a) for p in faces_flat[i]]))
-        normals.append(R(u, ang) @ np.array([0.0, 0.0, 1.0]))
-    # 角面：三点刚性配准，跟随相邻两个边中面
-    res = 0.0
-    for c, (v, iA, jA, rA, iB, jB, rB) in enumerate(corner_defs):
-        idxA, idxB = corner_anchor_idx[c]                     # A/B 在角面中的真实索引
-        A0, B0 = faces_flat[5 + c][idxA], faces_flat[5 + c][idxB]
-        Ak = cur[iA][jA]                                       # 边中面当前角点
-        Bk = cur[iB][jB]
-        Rk = rigid_from_points(A0 - v, B0 - v, Ak - v, Bk - v)
-        cur.append(np.array([v + Rk @ (p - v) for p in faces_flat[5 + c]]))
-        res = max(res, np.linalg.norm(Rk @ (A0 - v) - (Ak - v)),
-                  np.linalg.norm(Rk @ (B0 - v) - (Bk - v)))
-        normals.append(norm(np.cross(cur[5 + c][1] - cur[5 + c][0],
-                                     cur[5 + c][3] - cur[5 + c][0])))
-    # 角点归属：谁的面法向决定该角点的厚度偏移
-    owners = {0: [0, 0, 0, 0]}                     # 中心面：全部角点属于自己
-    for i in range(1, 5):
-        hinge_idx = {i % 4, (i + 1) % 4}           # 铰链边两端角点 → 属于中心面
-        owners[i] = [0 if j in hinge_idx else i for j in range(4)]
-    for c in range(4):
-        idxA, idxB = corner_anchor_idx[c]
-        own = [0, 0, 5 + c, 0]
-        own[idxA] = corner_defs[c][1]         # 角面 [v, A, C, B]：v 属中心面，
-        own[idxB] = corner_defs[c][4]         # A/B 属所在边中面，C 属自己
-        owners[5 + c] = own
-    crease = {0: {0, 1, 2, 3}}                     # 折痕边（厚度侧面用铰链色）
-    crease.update({i: {i % 4} for i in range(1, 5)})
-    crease.update({i: {0, 3} for i in range(5, 9)})
-    # 生成薄板
-    verts, faces, colors = [], [], []
-    for i, corners in enumerate(cur):
-        offs = [(thickness / 2) * normals[owners[i][j]] for j in range(4)]
-        v, f, col = quad_slab(corners, offs, palettes[i], crease=crease[i])
-        base = len(verts)
-        verts.extend(v)
-        faces.extend([[j + base for j in face] for face in f])
-        colors.extend(col)
-    return np.array(verts), faces, colors, res
+    drive = np.sqrt(FOLD_RATIO)
+    reference_distances = np.linalg.norm(
+        TEMPLATES[:, :, None, :] - TEMPLATES[:, None, :, :], axis=-1)
+    count = 0
+    for powers in product([-1, 1], repeat=4):
+        if powers[0] + powers[2] != powers[1] + powers[3]:
+            continue
+        products = np.array([1, -1, 1, -1]) * FOLD_RATIO ** np.array(powers)
+        tangents = np.array([drive, products[0] / drive,
+                             products[1] * drive / products[0],
+                             products[0] * products[2] / (products[1] * drive)])
+        angles = np.degrees(2 * np.arctan(tangents))
+        panels, residual = folded_faces(angles)
+        distances = np.linalg.norm(panels[:, :, None, :] - panels[:, None, :, :], axis=-1)
+        np.testing.assert_allclose(distances, reference_distances, atol=1e-10)
+        np.testing.assert_allclose(tangents * np.roll(tangents, -1), products, atol=1e-10)
+        if residual > 1e-10:
+            raise AssertionError(f'Branch {powers} fails geometric closure.')
+        jacobian = np.zeros((4, 4))
+        for index in range(4):
+            following = (index + 1) % 4
+            jacobian[index, index] = tangents[following]
+            jacobian[index, following] = tangents[index]
+        rank = np.linalg.matrix_rank(jacobian)
+        if rank != 3:
+            raise AssertionError(f'Unexpected branch Jacobian rank: {rank}')
+        count += 1
+        print(f'branch {count}: root powers={powers}; rho(T,L,B,R)={np.round(angles, 3)}; '
+              f'local DOF={4 - rank}; closure={residual:.2e}')
+    print(f'{count} labelled algebraic branches modulo global sign reversal; '
+          'each regular branch has one local DOF.')
+    print('The displayed initial assembly selects the (+1,+1,+1,+1) branch. '
+          'This is not a global collision/branch-switching classification.')
+    return count
 
 
-def face_stats(pts):
-    """四边形的边长序列与内角序列（度）。"""
-    pts = np.asarray(pts)
-    sides = [np.linalg.norm(pts[(i + 1) % 4] - pts[i]) for i in range(4)]
-    ang = []
-    for i in range(4):
-        va = pts[(i - 1) % 4] - pts[i]
-        vb = pts[(i + 1) % 4] - pts[i]
-        ang.append(np.degrees(np.arccos(np.clip(
-            np.dot(va, vb) / np.linalg.norm(va) / np.linalg.norm(vb), -1, 1))))
-    return sides, ang
+def pierces_panel(edges, panel, tolerance=1e-9):
+    """Detect transverse edge crossings strictly inside a convex panel."""
+    normal = norm(np.cross(panel[1] - panel[0], panel[3] - panel[0]))
+    distances = (edges - panel[0]) @ normal
+    for index in range(4):
+        following = (index + 1) % 4
+        if distances[index] * distances[following] >= -tolerance**2:
+            continue
+        fraction = distances[index] / (distances[index] - distances[following])
+        point = edges[index] + fraction * (edges[following] - edges[index])
+        inside = [np.dot(np.cross(panel[(side + 1) % 4] - panel[side],
+                                   point - panel[side]), normal) for side in range(4)]
+        if min(inside) > tolerance:
+            return True
+    return False
 
 
-def cyclic_eq(seq, ref, tol=1e-6):
-    """序列在循环轮换意义下与 ref 相等，返回轮换步数（不相等返回 None）。"""
-    n = len(ref)
-    for s in range(n):
-        if all(abs(seq[(i + s) % n] - ref[i]) < tol for i in range(n)):
-            return s
-    return None
+def validate(path):
+    """Check panel shape, rigidity, planarity, seams and sampled crossings."""
+    if len(SHARED_EDGES) != 12:
+        raise AssertionError(f'Expected 12 shared edges, got {len(SHARED_EDGES)}')
+    for index, panel in enumerate(TEMPLATES):
+        lengths, angles = face_stats(panel)
+        expected = [90] * 4 if 1 <= index <= 4 else [60, 60, 120, 120]
+        np.testing.assert_allclose(lengths, 1, atol=1e-10)
+        np.testing.assert_allclose(sorted(angles), expected, atol=1e-10)
+        if index >= 5:
+            np.testing.assert_allclose(angles[0], face_stats(TEMPLATES[0])[1][index - 5], atol=1e-10)
+            central_edges = np.roll(TEMPLATES[0], -1, axis=0) - TEMPLATES[0]
+            corner_edges = np.roll(panel, -1, axis=0) - panel
+            np.testing.assert_allclose(np.max(np.abs(corner_edges @ central_edges.T), axis=1),
+                                       1, atol=1e-10)
+        print(f'{FACE_NAMES[index]:>2}: sides={np.round(lengths, 3)}, angles={np.round(angles, 1)}')
+    reference_distances = np.linalg.norm(
+        TEMPLATES[:, :, None, :] - TEMPLATES[:, None, :, :], axis=-1)
+    vertex_cosines = np.cos(np.radians(face_stats(TEMPLATES[0])[1]))
+    worst = dict(rigidity=0.0, angles=0.0, gap=0.0, registration=0.0,
+                 planarity=0.0, hinge_closure=0.0)
+    for rotations in path:
+        radians = np.radians(rotations)
+        following_radians = np.roll(radians, -1)
+        equations = (-vertex_cosines * np.cos(radians) * np.cos(following_radians)
+                     + np.sin(radians) * np.sin(following_radians) - vertex_cosines)
+        worst['hinge_closure'] = max(worst['hinge_closure'], np.max(np.abs(equations)))
+        jacobian = np.zeros((4, 4))
+        for index in range(4):
+            following = (index + 1) % 4
+            first_angle, second_angle = radians[index], radians[following]
+            jacobian[index, index] = (vertex_cosines[index] * np.sin(first_angle) * np.cos(second_angle)
+                                      + np.cos(first_angle) * np.sin(second_angle))
+            jacobian[index, following] = (vertex_cosines[index] * np.cos(first_angle) * np.sin(second_angle)
+                                          + np.sin(first_angle) * np.cos(second_angle))
+        if np.linalg.matrix_rank(jacobian, tol=1e-9) != 3:
+            raise AssertionError('Expected one local DOF at this regular configuration.')
+        current, residual = folded_faces(rotations)
+        worst['registration'] = max(worst['registration'], residual)
+        distances = np.linalg.norm(current[:, :, None, :] - current[:, None, :, :], axis=-1)
+        worst['rigidity'] = max(worst['rigidity'], np.max(np.abs(distances - reference_distances)))
+        for index, panel in enumerate(current):
+            worst['angles'] = max(worst['angles'], np.max(np.abs(
+                face_stats(panel)[1] - face_stats(TEMPLATES[index])[1])))
+            normal = norm(np.cross(panel[1] - panel[0], panel[3] - panel[0]))
+            worst['planarity'] = max(worst['planarity'], abs(np.dot(panel[2] - panel[0], normal)))
+        for first_face, first_pair, second_face, second_pair in SHARED_EDGES:
+            worst['gap'] = max(worst['gap'], np.max(np.linalg.norm(
+                current[first_face, first_pair] - current[second_face, second_pair], axis=1)))
+        for first_face in range(9):
+            for second_face in range(first_face + 1, 9):
+                if (pierces_panel(current[first_face], current[second_face])
+                        or pierces_panel(current[second_face], current[first_face])):
+                    raise AssertionError(f'Panels {FACE_NAMES[first_face]}/{FACE_NAMES[second_face]}'
+                                         f' intersect at rotations {rotations}')
+    for name, error in worst.items():
+        print(f'max {name} error = {error:.3e}')
+        if error > 1e-8:
+            raise AssertionError(f'{name} validation failed: {error}')
+    for label, rotations in [('initial', path[0]), ('final', path[-1])]:
+        panels, _ = folded_faces(rotations)
+        height, tilts = spatial_metrics(panels)
+        seam_angles = []
+        for first_face, _, second_face, _ in SHARED_EDGES:
+            first_panel, second_panel = panels[first_face], panels[second_face]
+            first_normal = norm(np.cross(first_panel[1] - first_panel[0], first_panel[3] - first_panel[0]))
+            second_normal = norm(np.cross(second_panel[1] - second_panel[0], second_panel[3] - second_panel[0]))
+            seam_angles.append(np.degrees(np.arccos(np.clip(abs(np.dot(first_normal, second_normal)), 0, 1))))
+        print(f'{label}: height span = {height:.6f}; min shared-plane angle = {min(seam_angles):.3f} deg')
+        print(f'{label}: square-plane tilts to C (T,L,B,R) = {np.round(tilts, 3)} deg')
+        if height < 1e-8 or min(seam_angles) < 1e-8:
+            raise AssertionError(f'{label} must be a noncoplanar assembly.')
+    initial_height = spatial_metrics(folded_faces(path[0])[0])[0]
+    final_height = spatial_metrics(folded_faces(path[-1])[0])[0]
+    print(f'Height change = {100 * (final_height / initial_height - 1):+.3f}%; '
+          'physical constraint Jacobian rank = 3 (one local DOF).')
+    print(f'PASS: {len(path)} states, 9 rigid panels, 12 shared edges; no transverse crossings detected.')
+    return worst
+
+
+def render(path, output, fps=25):
+    """Show the connected initial assembly and its motion with one camera."""
+    hold = max(1, fps // 2)
+    frames = np.concatenate([np.repeat(path[:1], hold, axis=0), path[1:],
+                             np.repeat(path[-1:], hold, axis=0), path[-2:0:-1]])
+    figure = plt.figure(figsize=(13, 7), facecolor='#f5f7fb')
+    layout = figure.add_gridspec(1, 2, width_ratios=[1, 1], wspace=0.04)
+    assembly_axis = figure.add_subplot(layout[0], projection='3d')
+    fold_axis = figure.add_subplot(layout[1], projection='3d')
+    configurations = np.array([folded_faces(angles)[0] for angles in path])
+    initial_mesh = Poly3DCollection(configurations[0], facecolors=COLORS,
+                                    edgecolors='#203349', linewidths=1.2)
+    assembly_axis.add_collection3d(initial_mesh)
+    mesh = Poly3DCollection(configurations[0], facecolors=COLORS, edgecolors='#203349', linewidths=1.2)
+    fold_axis.add_collection3d(mesh)
+    lower = configurations.min(axis=(0, 1, 2))
+    upper = configurations.max(axis=(0, 1, 2))
+    padding = (upper - lower) * 0.06
+    for axis in (assembly_axis, fold_axis):
+        axis.set(xlim=(lower[0] - padding[0], upper[0] + padding[0]),
+                 ylim=(lower[1] - padding[1], upper[1] + padding[1]),
+                 zlim=(lower[2] - padding[2], upper[2] + padding[2]))
+        axis.set_box_aspect(upper - lower, zoom=VIEW_ZOOM)
+        axis.set_proj_type('ortho')
+        axis.view_init(elev=VIEW_ELEVATION, azim=VIEW_AZIMUTH)
+        axis.set_axis_off()
+        axis.set_facecolor('#f5f7fb')
+    initial_angles = '   '.join(f'{name}: {angle:+.0f}°'
+                              for name, angle in zip(FACE_NAMES[1:5], path[0]))
+    assembly_axis.set_title('Initial 3D assembly (fixed)\n' + initial_angles, fontsize=12, pad=0)
+    title = fold_axis.set_title('', fontsize=12, pad=0)
+    figure.suptitle('3 × 3 Spatial Folding · Rhombi + Squares',
+                   fontsize=16, fontweight='bold', y=0.97)
+    figure.text(0.275, 0.10, '9 connected panels · 12 shared edges\n'
+                'Initial configuration held fixed for comparison', ha='center',
+                fontsize=10, color='#46566a', linespacing=1.6)
+    state_text = figure.text(0.755, 0.10, '', ha='center', fontsize=10,
+                             color='#46566a', linespacing=1.6)
+    figure.text(0.5, 0.025, 'Blue: all 5 rhombi (60° / 120°) · Orange: 4 squares · '
+                f'Same {VIEW_ELEVATION}° view and scale · Central panel fixed', ha='center',
+                fontsize=10, color='#46566a')
+    figure.subplots_adjust(left=0.035, right=0.99, bottom=0.17, top=0.84)
+
+    def update(frame_index):
+        angles = frames[frame_index]
+        panels, _ = folded_faces(angles)
+        height, tilts = spatial_metrics(panels)
+        mesh.set_verts(panels)
+        title.set_text('Fold / unfold\n' + '   '.join(
+            f'{name}: {angle:+.0f}°' for name, angle in zip(FACE_NAMES[1:5], angles)))
+        state_text.set_text(f'Height span: {height:.3f} (initial: {np.ptp(configurations[0, :, :, 2]):.3f})\n'
+                            'Plane tilts to C (T/L/B/R): ' + ' / '.join(f'{tilt:.1f}°' for tilt in tilts))
+        return mesh, title, state_text
+
+    update(0)
+    assembled = output.with_name(output.stem + '_assembled.png')
+    figure.savefig(assembled, dpi=150, facecolor=figure.get_facecolor())
+    animation = FuncAnimation(figure, update, frames=len(frames), interval=1000 / fps, blit=False)
+    animation.save(str(output), writer=PillowWriter(fps=fps), dpi=100)
+    update(hold + len(path) - 2)
+    preview = output.with_suffix('.png')
+    figure.savefig(preview, dpi=160, facecolor=figure.get_facecolor())
+    plt.close(figure)
+    print(f'GIF: {output}\nPreview: {preview}\nInitial assembly: {assembled}')
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--min-angle', type=float, default=INITIAL_ANGLE,
+                        help='Initial signed T rotation in degrees (default about 54.736).')
+    parser.add_argument('--max-angle', type=float, default=130,
+                        help='Final signed T rotation in degrees (<180; default 130).')
+    parser.add_argument('--steps', type=int, default=60, help='Steps in each half cycle (>=2).')
+    parser.add_argument('--output', type=Path, default=OUTPUT)
+    parser.add_argument('--check-only', action='store_true', help='Validate geometry without writing images.')
+    parser.add_argument('--audit-branches', action='store_true',
+                        help='Check regular algebraic assembly branches without writing images.')
+    args = parser.parse_args()
+    if args.audit_branches:
+        audit_branches()
+        return
+    path = fold_path(args.steps, args.max_angle, args.min_angle)
+    validate(path)
+    if not args.check_only:
+        render(path, args.output)
 
 
 if __name__ == '__main__':
-    # 平铺状态检查：9 面严格全等——边长序与内角序都在循环轮换意义下相等
-    print('== flat state: strict congruence (cyclic order) ==')
-    ref = face_stats(faces_flat[0])
-    print(f'central: sides={np.round(ref[0], 3)}  angles={np.round(ref[1], 1)}')
-    for i in range(9):
-        s, a = face_stats(faces_flat[i])
-        ss, sa = cyclic_eq(s, ref[0]), cyclic_eq(a, ref[1])
-        print(f'face {i}: sides={np.round(s, 3)} angles={np.round(a, 1)}'
-              f'  shift_sides={ss}  shift_angles={sa}')
-        assert ss is not None and sa is not None, f'face {i} NOT congruent!'
-    assert np.allclose(sorted(ref[1]), [60.0, 75.0, 105.0, 120.0], atol=1e-9)
-    print('=> 9 faces strictly congruent (same cyclic side/angle sequences)')
-
-    print('求解折叠路径 ...')
-    path, err = fold_path()
-    print(f'Bricard closure residual = {err:.2e}')
-
-    # 折叠全程角面配准残差（中面贴合检查）
-    worst = 0.0
-    for al in path[::5]:
-        _, _, _, res = build_mesh(al)
-        worst = max(worst, res)
-    print(f'max corner-face registration residual = {worst:.2e}')
-    assert worst < 1e-6, 'corner faces do not close along the fold path!'
-
-    # 折叠全程面板角点贴合检查：每条共边两端，相邻面板的顶/底角点应逐点重合
-    # （左面的右上角 == 中心面的左上角，等等）
-    worst_gap = 0.0
-    for al in path[::5]:
-        verts, _, _, _ = build_mesh(al)   # 面板 i 的 8 个顶点位于 verts[8i:8i+8]
-        top = lambda i, j: verts[8 * i + j]
-        bot = lambda i, j: verts[8 * i + 4 + j]
-        for i in range(1, 5):             # 中心折痕两端：中心角点 vs 边中面角点
-            worst_gap = max(
-                worst_gap,
-                np.linalg.norm(top(0, i - 1) - top(i, i % 4)),
-                np.linalg.norm(top(0, (i - 2) % 4) - top(i, (i + 1) % 4)),
-                np.linalg.norm(bot(0, i - 1) - bot(i, i % 4)),
-                np.linalg.norm(bot(0, (i - 2) % 4) - bot(i, (i + 1) % 4)))
-        for c, (v, iA, jA, rA, iB, jB, rB) in enumerate(corner_defs):
-            idxA, idxB = corner_anchor_idx[c]
-            worst_gap = max(
-                worst_gap,
-                np.linalg.norm(top(5 + c, 0) - top(0, c)),
-                np.linalg.norm(top(5 + c, idxA) - top(iA, jA)),
-                np.linalg.norm(top(5 + c, idxB) - top(iB, jB)),
-                np.linalg.norm(bot(5 + c, 0) - bot(0, c)),
-                np.linalg.norm(bot(5 + c, idxA) - bot(iA, jA)),
-                np.linalg.norm(bot(5 + c, idxB) - bot(iB, jB)))
-    print(f'max slab corner gap along path = {worst_gap:.2e}')
-    assert worst_gap < 1e-6, 'slab corners separate along the fold path!'
-    applied = np.abs(path[-1]) * [-1, -1, 1, -1]
-    print(f'end of fold: applied angles (T,L,B,R) = {np.round(applied, 1)} deg'
-          f'  (+ up / - down)')
-
-    frames = np.concatenate([path, path[::-1]])   # 折满再展开
-
-    fig = plt.figure(figsize=(9, 8))
-    ax = fig.add_subplot(111, projection='3d')
-
-    def update(k):
-        ax.clear()
-        verts, faces, colors, _ = build_mesh(frames[k])
-        mesh = Poly3DCollection([verts[f] for f in faces], facecolors=colors,
-                                edgecolor='black', linewidths=0.3)
-        ax.add_collection3d(mesh)
-        ax.set_xlim(-3.1, 3.1)
-        ax.set_ylim(-3.1, 3.1)
-        ax.set_zlim(-3.1, 3.1)
-        ax.set_box_aspect((1, 1, 1))
-        ax.view_init(elev=28, azim=-58)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_zticks([])
-        ax.set_title(f'3×3 Congruent Mesh (Ex.3): '
-                     f'$\\alpha_1$={frames[k, 0]:.0f} deg')
-
-    ani = FuncAnimation(fig, update, frames=len(frames), interval=40)
-    ani.save('origami_grid3x3.gif', writer='pillow', fps=25)
-    print('done -> origami_grid3x3.gif')
+    main()
