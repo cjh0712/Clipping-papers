@@ -1,6 +1,6 @@
 # Clipping-papers
 
-刚性折纸（rigid origami）实验代码：复现论文 **《Flexible quadrilateral mesh of isogonal type in arbitrary size》** —— Yang Liu, Jinsan Cheng, *ACM Transactions on Graphics* 37(4), Article 111, 2018（SIGGRAPH 2018）。
+刚性折纸（rigid origami）实验代码：复现未发表论文 **《Flexible quadrilateral mesh of isogonal type in arbitrary size》** 
 
 ## 演示
 
@@ -83,4 +83,4 @@ python origami_grid3x3.py --min-angle 50 --max-angle 120 --steps 80 --output cus
 
 ## 参考
 
-Y. Liu, J. Cheng. Flexible quadrilateral mesh of isogonal type in arbitrary size. *ACM Trans. Graph.* 37(4), Article 111, 2018.
+Y. Liu, J. Cheng. Flexible quadrilateral mesh of isogonal type in arbitrary size. *ACM Trans. Graph.* 37(4).
