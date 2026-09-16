@@ -16,9 +16,10 @@ FACE_NAMES = ['C', 'T', 'L', 'B', 'R', 'TL', 'BL', 'BR', 'TR']
 COLORS = ['#5294cc'] + ['#efa64b'] * 4 + ['#5294cc'] * 4
 OUTPUT = Path(__file__).with_name('origami_grid3x3_rhombi_squares.gif')
 FOLD_RATIO = 2 - np.sqrt(3)
-INITIAL_ANGLE = np.degrees(2 * np.arctan(np.sqrt(FOLD_RATIO)))
+START_ANGLE = np.degrees(2 * np.arctan(np.sqrt(FOLD_RATIO)))
+END_ANGLE = 130.0
 VIEW_ELEVATION = 40
-VIEW_AZIMUTH = -85
+VIEW_AZIMUTH = -25
 VIEW_ZOOM = 1.16
 
 
@@ -48,10 +49,10 @@ def frame(first, second):
 def panel_templates():
     """Individual planar templates, not a connected coplanar configuration.
 
-    Rotate each old corner rhombus exactly 90 degrees about its centroid,
-    then choose its nearest vertex as the central attachment. All five
-    rhombi now have parallel corresponding edges in this template layout.
-    Squares are placed in their zero-rotation reference planes only.
+    Rotate each old corner rhombus exactly 90 degrees about its centroid.
+    Attach the nearest vertex after rotating, exchanging acute and obtuse
+    attachment angles relative to the complementary-angle assembly.
+    All five rhombi have parallel corresponding edges in template space.
     """
     down = np.array([0.0, -1.0, 0.0])
     right = np.array([np.sqrt(3) / 2, -0.5, 0.0])
@@ -95,20 +96,19 @@ def shared_edges():
 SHARED_EDGES = shared_edges()
 
 
-def fold_path(n_half=60, amax_deg=130.0, amin_deg=INITIAL_ANGLE):
-    """Noncoplanar closed branch after quarter-turning the corner templates.
+def fold_path(n_half=60, start_deg=START_ANGLE, end_deg=END_ANGLE):
+    """Fold downward on one noncoplanar branch without changing chirality.
 
-    The corner angle at each central vertex is now mu=lambda, instead of
-    mu=180-lambda. For adjacent half-angle tangents x,y this requires
-    cos(lambda) * (1 + (x*y)**2) - 2*x*y = 0.
-    One closed branch is (x_T,x_L,x_B,x_R)=(t,q/t,-t,-q/t),
-    q=2-sqrt(3). Reference rho=0 is the square's central-plane reference,
-    not a realizable flat configuration of the assembled nine panels.
+    At each vertex the corner angle is mu=lambda. For adjacent
+    half-angle tangents x,y, compatibility is
+    cos(lambda)*(1+(x*y)**2)-2*x*y=0. One closed branch is
+    (x_T,x_L,x_B,x_R)=(t,q/t,-t,-q/t), q=2-sqrt(3).
+    Both endpoints are noncoplanar; the path does not cross t=0.
     """
-    if n_half < 2 or not 0 < amin_deg < amax_deg < 180:
-        raise ValueError('Need n_half >= 2 and 0 < min-angle < max-angle < 180 degrees.')
+    if n_half < 2 or not 0 < start_deg < end_deg < 180:
+        raise ValueError('Need n_half >= 2 and 0 < start-angle < end-angle < 180 degrees.')
     progress = np.linspace(0, 1, n_half + 1)
-    drive = np.radians(amin_deg + (amax_deg - amin_deg)
+    drive = np.radians(start_deg + (end_deg - start_deg)
                        * (1 - np.cos(np.pi * progress)) / 2)
     tangent = np.tan(drive / 2)
     half_tangents = np.column_stack([tangent, FOLD_RATIO / tangent,
@@ -158,15 +158,67 @@ def spatial_metrics(panels):
     return np.ptp(panels[:, :, 2]), tilts
 
 
+def long_diagonals(panels):
+    """Endpoints of each rhombus's long diagonal in assembled coordinates."""
+    result = []
+    for panel in panels[[0, 5, 6, 7, 8]]:
+        pairs = np.array([panel[[0, 2]], panel[[1, 3]]])
+        lengths = np.linalg.norm(pairs[:, 1] - pairs[:, 0], axis=1)
+        result.append(pairs[np.argmax(lengths)])
+    return np.array(result)
+
+
+def rhombus_direction_error(panels):
+    """Compare long axes after the shortest rotation aligning face normals."""
+    diagonals = long_diagonals(panels)
+    directions = diagonals[:, 1] - diagonals[:, 0]
+    central_normal = norm(np.cross(panels[0, 1] - panels[0, 0], panels[0, 3] - panels[0, 0]))
+    central_direction = norm(directions[0])
+    errors = []
+    for panel, direction in zip(panels[5:], directions[1:]):
+        normal = norm(np.cross(panel[1] - panel[0], panel[3] - panel[0]))
+        axis = np.cross(normal, central_normal)
+        cosine = np.clip(np.dot(normal, central_normal), -1, 1)
+        if np.linalg.norm(axis) < 1e-10:
+            if cosine < 0:
+                raise AssertionError('Antiparallel normals make tilt removal ambiguous.')
+            aligned = norm(direction)
+        else:
+            aligned = rotation(axis, np.arccos(cosine)) @ norm(direction)
+        errors.append(np.linalg.norm(np.cross(aligned, central_direction)))
+    return max(errors)
+
+
+def vertex_chirality(panels):
+    """Signed volumes of consecutive crease-ray triples at four vertices."""
+    signatures = []
+    for index in range(4):
+        vertex = panels[0, index]
+        first_face = index + 1
+        second_face = (index + 1) % 4 + 1
+        rays = np.array([
+            panels[0, (index - 1) % 4] - vertex,
+            panels[first_face, 3] - vertex,
+            panels[second_face, 2] - vertex,
+            panels[0, (index + 1) % 4] - vertex,
+        ])
+        signatures.append([
+            np.linalg.det(np.stack([rays[offset], rays[(offset + 1) % 4],
+                                    rays[(offset + 2) % 4]]))
+            for offset in range(4)
+        ])
+    return np.array(signatures)
+
+
 def audit_branches():
     """Enumerate regular labelled algebraic branches, modulo rho -> -rho.
 
-    Products p_i=x_i*x_(i+1) have roots (+q,-q,+q,-q) or their
-    corresponding reciprocals. Loop closure requires p_0*p_2=p_1*p_3.
+    Products p_i=x_i*x_(i+1) have roots (+q,-q,+q,-q), with q optionally
+    replaced by 1/q. Loop closure requires p_0*p_2=p_1*p_3.
     This counts algebraic assembly branches, not collision-free global
     motions or equivalence classes under relabelling the panels.
     """
-    drive = np.sqrt(FOLD_RATIO)
+    drive = np.tan(np.radians(70) / 2)
     reference_distances = np.linalg.norm(
         TEMPLATES[:, :, None, :] - TEMPLATES[:, None, :, :], axis=-1)
     count = 0
@@ -197,7 +249,7 @@ def audit_branches():
               f'local DOF={4 - rank}; closure={residual:.2e}')
     print(f'{count} labelled algebraic branches modulo global sign reversal; '
           'each regular branch has one local DOF.')
-    print('The displayed initial assembly selects the (+1,+1,+1,+1) branch. '
+    print('The displayed assembly selects the (+1,+1,+1,+1) branch. '
           'This is not a global collision/branch-switching classification.')
     return count
 
@@ -229,7 +281,8 @@ def validate(path):
         np.testing.assert_allclose(lengths, 1, atol=1e-10)
         np.testing.assert_allclose(sorted(angles), expected, atol=1e-10)
         if index >= 5:
-            np.testing.assert_allclose(angles[0], face_stats(TEMPLATES[0])[1][index - 5], atol=1e-10)
+            central_angle = face_stats(TEMPLATES[0])[1][index - 5]
+            np.testing.assert_allclose(angles[0], central_angle, atol=1e-10)
             central_edges = np.roll(TEMPLATES[0], -1, axis=0) - TEMPLATES[0]
             corner_edges = np.roll(panel, -1, axis=0) - panel
             np.testing.assert_allclose(np.max(np.abs(corner_edges @ central_edges.T), axis=1),
@@ -238,25 +291,34 @@ def validate(path):
     reference_distances = np.linalg.norm(
         TEMPLATES[:, :, None, :] - TEMPLATES[:, None, :, :], axis=-1)
     vertex_cosines = np.cos(np.radians(face_stats(TEMPLATES[0])[1]))
+    initial_panels, _ = folded_faces(path[0])
+    initial_chirality = vertex_chirality(initial_panels)
+    if np.min(np.abs(initial_chirality)) < 1e-8:
+        raise AssertionError('Initial configuration is too close to a vertex inversion.')
+    chirality_signs = np.sign(initial_chirality)
     worst = dict(rigidity=0.0, angles=0.0, gap=0.0, registration=0.0,
-                 planarity=0.0, hinge_closure=0.0)
+                 planarity=0.0, hinge_closure=0.0, rhombus_direction=0.0,
+                 chirality_margin=np.inf)
     for rotations in path:
-        radians = np.radians(rotations)
-        following_radians = np.roll(radians, -1)
-        equations = (-vertex_cosines * np.cos(radians) * np.cos(following_radians)
-                     + np.sin(radians) * np.sin(following_radians) - vertex_cosines)
+        half_tangents = np.tan(np.radians(rotations) / 2)
+        following_tangents = np.roll(half_tangents, -1)
+        products = half_tangents * following_tangents
+        equations = vertex_cosines * (1 + products ** 2) - 2 * products
         worst['hinge_closure'] = max(worst['hinge_closure'], np.max(np.abs(equations)))
         jacobian = np.zeros((4, 4))
         for index in range(4):
             following = (index + 1) % 4
-            first_angle, second_angle = radians[index], radians[following]
-            jacobian[index, index] = (vertex_cosines[index] * np.sin(first_angle) * np.cos(second_angle)
-                                      + np.cos(first_angle) * np.sin(second_angle))
-            jacobian[index, following] = (vertex_cosines[index] * np.cos(first_angle) * np.sin(second_angle)
-                                          + np.sin(first_angle) * np.cos(second_angle))
+            factor = 2 * vertex_cosines[index] * products[index] - 2
+            jacobian[index, index] = factor * half_tangents[following]
+            jacobian[index, following] = factor * half_tangents[index]
         if np.linalg.matrix_rank(jacobian, tol=1e-9) != 3:
             raise AssertionError('Expected one local DOF at this regular configuration.')
         current, residual = folded_faces(rotations)
+        worst['rhombus_direction'] = max(worst['rhombus_direction'], rhombus_direction_error(current))
+        chirality = vertex_chirality(current)
+        if not np.array_equal(np.sign(chirality), chirality_signs):
+            raise AssertionError(f'Vertex concavity changed at rotations {rotations}.')
+        worst['chirality_margin'] = min(worst['chirality_margin'], np.min(np.abs(chirality)))
         worst['registration'] = max(worst['registration'], residual)
         distances = np.linalg.norm(current[:, :, None, :] - current[:, None, :, :], axis=-1)
         worst['rigidity'] = max(worst['rigidity'], np.max(np.abs(distances - reference_distances)))
@@ -275,9 +337,14 @@ def validate(path):
                     raise AssertionError(f'Panels {FACE_NAMES[first_face]}/{FACE_NAMES[second_face]}'
                                          f' intersect at rotations {rotations}')
     for name, error in worst.items():
-        print(f'max {name} error = {error:.3e}')
-        if error > 1e-8:
-            raise AssertionError(f'{name} validation failed: {error}')
+        if name == 'chirality_margin':
+            print(f'min {name} = {error:.3e}')
+            if error < 1e-8:
+                raise AssertionError(f'{name} validation failed: {error}')
+        else:
+            print(f'max {name} error = {error:.3e}')
+            if error > 1e-8:
+                raise AssertionError(f'{name} validation failed: {error}')
     for label, rotations in [('initial', path[0]), ('final', path[-1])]:
         panels, _ = folded_faces(rotations)
         height, tilts = spatial_metrics(panels)
@@ -295,6 +362,7 @@ def validate(path):
     final_height = spatial_metrics(folded_faces(path[-1])[0])[0]
     print(f'Height change = {100 * (final_height / initial_height - 1):+.3f}%; '
           'physical constraint Jacobian rank = 3 (one local DOF).')
+    print('Vertex chirality signs stayed fixed at all four intersections.')
     print(f'PASS: {len(path)} states, 9 rigid panels, 12 shared edges; no transverse crossings detected.')
     return worst
 
@@ -314,14 +382,28 @@ def render(path, output, fps=25):
     assembly_axis.add_collection3d(initial_mesh)
     mesh = Poly3DCollection(configurations[0], facecolors=COLORS, edgecolors='#203349', linewidths=1.2)
     fold_axis.add_collection3d(mesh)
+    diagonal_lines = []
+    for diagonal in long_diagonals(configurations[0]):
+        assembly_axis.plot(*diagonal.T, color='#173c63', linestyle='--', linewidth=1.4, zorder=10)
+        line, = fold_axis.plot(*diagonal.T, color='#173c63', linestyle='--', linewidth=1.4, zorder=10)
+        diagonal_lines.append(line)
     lower = configurations.min(axis=(0, 1, 2))
     upper = configurations.max(axis=(0, 1, 2))
     padding = (upper - lower) * 0.06
+    initial_lower = configurations[0].min(axis=(0, 1))
+    initial_upper = configurations[0].max(axis=(0, 1))
+    initial_padding = (initial_upper - initial_lower) * 0.06
+    assembly_axis.set(
+        xlim=(initial_lower[0] - initial_padding[0], initial_upper[0] + initial_padding[0]),
+        ylim=(initial_lower[1] - initial_padding[1], initial_upper[1] + initial_padding[1]),
+        zlim=(initial_lower[2] - initial_padding[2], initial_upper[2] + initial_padding[2]),
+    )
+    assembly_axis.set_box_aspect(initial_upper - initial_lower, zoom=VIEW_ZOOM)
+    fold_axis.set(xlim=(lower[0] - padding[0], upper[0] + padding[0]),
+                  ylim=(lower[1] - padding[1], upper[1] + padding[1]),
+                  zlim=(lower[2] - padding[2], upper[2] + padding[2]))
+    fold_axis.set_box_aspect(upper - lower, zoom=VIEW_ZOOM)
     for axis in (assembly_axis, fold_axis):
-        axis.set(xlim=(lower[0] - padding[0], upper[0] + padding[0]),
-                 ylim=(lower[1] - padding[1], upper[1] + padding[1]),
-                 zlim=(lower[2] - padding[2], upper[2] + padding[2]))
-        axis.set_box_aspect(upper - lower, zoom=VIEW_ZOOM)
         axis.set_proj_type('ortho')
         axis.view_init(elev=VIEW_ELEVATION, azim=VIEW_AZIMUTH)
         axis.set_axis_off()
@@ -333,12 +415,12 @@ def render(path, output, fps=25):
     figure.suptitle('3 × 3 Spatial Folding · Rhombi + Squares',
                    fontsize=16, fontweight='bold', y=0.97)
     figure.text(0.275, 0.10, '9 connected panels · 12 shared edges\n'
-                'Initial configuration held fixed for comparison', ha='center',
+                'Four vertex-chirality signs fixed during folding', ha='center',
                 fontsize=10, color='#46566a', linespacing=1.6)
     state_text = figure.text(0.755, 0.10, '', ha='center', fontsize=10,
                              color='#46566a', linespacing=1.6)
-    figure.text(0.5, 0.025, 'Blue: all 5 rhombi (60° / 120°) · Orange: 4 squares · '
-                f'Same {VIEW_ELEVATION}° view and scale · Central panel fixed', ha='center',
+    figure.text(0.5, 0.025, 'Blue: 5 rhombi · Orange: 4 squares · Dashed: long diagonals · '
+                f'Same {VIEW_ELEVATION}° camera · Independently fitted views', ha='center',
                 fontsize=10, color='#46566a')
     figure.subplots_adjust(left=0.035, right=0.99, bottom=0.17, top=0.84)
 
@@ -347,11 +429,14 @@ def render(path, output, fps=25):
         panels, _ = folded_faces(angles)
         height, tilts = spatial_metrics(panels)
         mesh.set_verts(panels)
-        title.set_text('Fold / unfold\n' + '   '.join(
+        for line, diagonal in zip(diagonal_lines, long_diagonals(panels)):
+            line.set_data_3d(*diagonal.T)
+        title.set_text('Fold downward / return\n' + '   '.join(
             f'{name}: {angle:+.0f}°' for name, angle in zip(FACE_NAMES[1:5], angles)))
         state_text.set_text(f'Height span: {height:.3f} (initial: {np.ptp(configurations[0, :, :, 2]):.3f})\n'
-                            'Plane tilts to C (T/L/B/R): ' + ' / '.join(f'{tilt:.1f}°' for tilt in tilts))
-        return mesh, title, state_text
+                            'Plane tilts to C (T/L/B/R): ' + ' / '.join(f'{tilt:.1f}°' for tilt in tilts)
+                            + ' · chirality fixed')
+        return mesh, title, state_text, *diagonal_lines
 
     update(0)
     assembled = output.with_name(output.stem + '_assembled.png')
@@ -367,10 +452,10 @@ def render(path, output, fps=25):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--min-angle', type=float, default=INITIAL_ANGLE,
+    parser.add_argument('--start-angle', type=float, default=START_ANGLE,
                         help='Initial signed T rotation in degrees (default about 54.736).')
-    parser.add_argument('--max-angle', type=float, default=130,
-                        help='Final signed T rotation in degrees (<180; default 130).')
+    parser.add_argument('--end-angle', type=float, default=END_ANGLE,
+                        help='Final signed T rotation in degrees (default 130).')
     parser.add_argument('--steps', type=int, default=60, help='Steps in each half cycle (>=2).')
     parser.add_argument('--output', type=Path, default=OUTPUT)
     parser.add_argument('--check-only', action='store_true', help='Validate geometry without writing images.')
@@ -380,7 +465,7 @@ def main():
     if args.audit_branches:
         audit_branches()
         return
-    path = fold_path(args.steps, args.max_angle, args.min_angle)
+    path = fold_path(args.steps, args.start_angle, args.end_angle)
     validate(path)
     if not args.check_only:
         render(path, args.output)
