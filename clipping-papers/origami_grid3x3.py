@@ -150,6 +150,58 @@ def face_stats(points):
     return lengths, np.degrees(np.arccos(np.clip(cosines, -1, 1)))
 
 
+def grid_vertices(panels):
+    """Recover the 4x4 shared vertices in row/column order."""
+    mappings = ((5, [2, 3, 0, 1]), (1, [3, 0, 1, 2]), (8, [3, 0, 1, 2]),
+                (2, [2, 3, 0, 1]), (0, [0, 1, 2, 3]), (4, [0, 1, 2, 3]),
+                (6, [1, 2, 3, 0]), (3, [1, 2, 3, 0]), (7, [0, 1, 2, 3]))
+    faces = np.array([panels[index, order] for index, order in mappings]).reshape(3, 3, 4, 3)
+    vertices = np.full((4, 4, 3), np.nan)
+    for row in range(3):
+        for column in range(3):
+            for corner, (row_offset, column_offset) in enumerate(((0, 0), (1, 0), (1, 1), (0, 1))):
+                target = vertices[row + row_offset, column + column_offset]
+                point = faces[row, column, corner]
+                if np.isfinite(target).all():
+                    np.testing.assert_allclose(target, point, atol=1e-9, rtol=0)
+                target[:] = point
+    return vertices
+
+
+def row_column_spans(vertices):
+    """Straight spatial distances along one row and one column, not screen bounds."""
+    vertices = np.asarray(vertices, dtype=float)
+    return np.linalg.norm([vertices[0, -1] - vertices[0, 0],
+                           vertices[-1, 0] - vertices[0, 0]], axis=1)
+
+
+def contraction_report(spans, require_isotropic=False):
+    """Audit equal fractional contraction separately from rigid-fold closure."""
+    spans = np.asarray(spans, dtype=float)
+    if spans.ndim != 2 or spans.shape[1] != 2 or len(spans) < 2:
+        raise ValueError('Need at least two pairs of row/column spans.')
+    if not np.isfinite(spans).all() or np.any(spans <= 1e-9):
+        raise ValueError('Cannot normalize a zero or invalid spatial span.')
+    ratios = spans / spans[0]
+    mismatch = float(np.max(np.abs(ratios[:, 0] - ratios[:, 1])))
+    monotone = bool(np.all(np.diff(ratios, axis=0) <= 1e-9))
+    contracting = bool(np.all(ratios[-1] < 1 - 1e-9))
+    isotropic = mismatch <= 1e-9 and monotone and contracting
+    for index, label in enumerate(('along a row (H)', 'along a column (V)')):
+        print(f'Spatial span {label}: {spans[0, index]:.6f} -> {spans[-1, index]:.6f}; '
+              f'change = {100 * (ratios[-1, index] - 1):+.3f}%')
+    print(f'Max H/V normalized-span difference = {mismatch:.6e}')
+    if not isotropic:
+        message = ('This path is NOT equal biaxial contraction. Rigid panels and closed seams '
+                   'do not imply isotropic shrinkage; no display rescaling is applied.')
+        if require_isotropic:
+            raise ValueError(message)
+        print('WARNING: ' + message)
+    else:
+        print('PASS: both spatial spans contract by the same fraction at every sampled state.')
+    return dict(ratios=ratios, mismatch=mismatch, isotropic=isotropic)
+
+
 def spatial_metrics(panels):
     """Height and smaller angles between square planes and the central plane."""
     normals = np.cross(panels[:, 1] - panels[:, 0], panels[:, 3] - panels[:, 0])
@@ -271,7 +323,7 @@ def pierces_panel(edges, panel, tolerance=1e-9):
     return False
 
 
-def validate(path):
+def validate(path, require_isotropic=False):
     """Check panel shape, rigidity, planarity, seams and sampled crossings."""
     if len(SHARED_EDGES) != 12:
         raise AssertionError(f'Expected 12 shared edges, got {len(SHARED_EDGES)}')
@@ -364,11 +416,13 @@ def validate(path):
           'physical constraint Jacobian rank = 3 (one local DOF).')
     print('Vertex chirality signs stayed fixed at all four intersections.')
     print(f'PASS: {len(path)} states, 9 rigid panels, 12 shared edges; no transverse crossings detected.')
+    contraction_report([row_column_spans(grid_vertices(folded_faces(angles)[0]))
+                        for angles in path], require_isotropic)
     return worst
 
 
 def render(path, output, fps=25):
-    """Show the connected initial assembly and its motion with one camera."""
+    """Show both assemblies with the same fixed camera and physical scale."""
     hold = max(1, fps // 2)
     frames = np.concatenate([np.repeat(path[:1], hold, axis=0), path[1:],
                              np.repeat(path[-1:], hold, axis=0), path[-2:0:-1]])
@@ -390,20 +444,11 @@ def render(path, output, fps=25):
     lower = configurations.min(axis=(0, 1, 2))
     upper = configurations.max(axis=(0, 1, 2))
     padding = (upper - lower) * 0.06
-    initial_lower = configurations[0].min(axis=(0, 1))
-    initial_upper = configurations[0].max(axis=(0, 1))
-    initial_padding = (initial_upper - initial_lower) * 0.06
-    assembly_axis.set(
-        xlim=(initial_lower[0] - initial_padding[0], initial_upper[0] + initial_padding[0]),
-        ylim=(initial_lower[1] - initial_padding[1], initial_upper[1] + initial_padding[1]),
-        zlim=(initial_lower[2] - initial_padding[2], initial_upper[2] + initial_padding[2]),
-    )
-    assembly_axis.set_box_aspect(initial_upper - initial_lower, zoom=VIEW_ZOOM)
-    fold_axis.set(xlim=(lower[0] - padding[0], upper[0] + padding[0]),
-                  ylim=(lower[1] - padding[1], upper[1] + padding[1]),
-                  zlim=(lower[2] - padding[2], upper[2] + padding[2]))
-    fold_axis.set_box_aspect(upper - lower, zoom=VIEW_ZOOM)
     for axis in (assembly_axis, fold_axis):
+        axis.set(xlim=(lower[0] - padding[0], upper[0] + padding[0]),
+                 ylim=(lower[1] - padding[1], upper[1] + padding[1]),
+                 zlim=(lower[2] - padding[2], upper[2] + padding[2]))
+        axis.set_box_aspect(upper - lower, zoom=VIEW_ZOOM)
         axis.set_proj_type('ortho')
         axis.view_init(elev=VIEW_ELEVATION, azim=VIEW_AZIMUTH)
         axis.set_axis_off()
@@ -420,7 +465,7 @@ def render(path, output, fps=25):
     state_text = figure.text(0.755, 0.10, '', ha='center', fontsize=10,
                              color='#46566a', linespacing=1.6)
     figure.text(0.5, 0.025, 'Blue: 5 rhombi · Orange: 4 squares · Dashed: long diagonals · '
-                f'Same {VIEW_ELEVATION}° camera · Independently fitted views', ha='center',
+                f'Same {VIEW_ELEVATION}° camera · Same fixed scale in both views', ha='center',
                 fontsize=10, color='#46566a')
     figure.subplots_adjust(left=0.035, right=0.99, bottom=0.17, top=0.84)
 
@@ -461,12 +506,17 @@ def main():
     parser.add_argument('--check-only', action='store_true', help='Validate geometry without writing images.')
     parser.add_argument('--audit-branches', action='store_true',
                         help='Check regular algebraic assembly branches without writing images.')
+    parser.add_argument('--require-isotropic', action='store_true',
+                        help='Reject paths without equal fractional H/V contraction before writing images.')
     args = parser.parse_args()
     if args.audit_branches:
         audit_branches()
         return
     path = fold_path(args.steps, args.start_angle, args.end_angle)
-    validate(path)
+    try:
+        validate(path, args.require_isotropic)
+    except ValueError as error:
+        parser.error(str(error))
     if not args.check_only:
         render(path, args.output)
 

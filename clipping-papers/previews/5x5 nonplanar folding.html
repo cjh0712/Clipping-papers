@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>5×5 空间四边形 · 原圆联动</title>
+  <script src="https://www.geogebra.org/apps/deployggb.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f7fb; color: #25364b; font: 15px/1.6 "Microsoft YaHei", sans-serif; }
+    header { padding: 20px 26px 14px; }
+    h1 { font-size: 24px; margin: 0 0 7px; }
+    p { margin: 6px 0; }
+    .note { color: #96600c; }
+    main { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; padding: 0 20px 20px; }
+    #applet, aside { background: white; border: 1px solid #dce4ee; border-radius: 12px; overflow: hidden; }
+    aside { padding: 20px; }
+    .status { padding: 12px 0; border-bottom: 1px solid #e5ecf3; }
+    strong { display: block; color: #1a6595; overflow-wrap: anywhere; }
+    .controls { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; }
+    button { padding: 9px 14px; border: 1px solid #bbcadd; border-radius: 7px; background: #eef4fa; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .55; }
+    #play { background: #1a6595; color: white; border-color: #1a6595; }
+    input { width: 100%; accent-color: #1a6595; }
+    a { color: #185e9c; }
+    small { color: #677d91; }
+    @media (max-width: 850px) { main { grid-template-columns: 1fr; } aside { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>5 × 5 空间四边形 · 原圆联动</h1>
+    <p>保留原始 2×2；用取中点、点对称补齐 25 个面。拖动红色 F 点，或点击播放。</p>
+    <p class="note">几何联动演示：新增面片未施加刚性约束，运动中可能变形；不代表已实现精确刚性折叠。</p>
+  </header>
+  <main>
+    <div id="applet"></div>
+    <aside>
+      <div class="status">加载状态<strong id="state">正在加载 GeoGebra…</strong></div>
+      <div class="status">拼接方式<strong>25 个面 · 36 个共享顶点<br>40 条共边 · 无分离补片</strong></div>
+      <div class="status">F 的原始定义<strong id="definition">—</strong></div>
+      <div class="status">F 可直接拖动<strong id="movable">—</strong></div>
+      <div class="status">相对初态的圆周转角<strong id="angle">0.0°</strong></div>
+      <div class="controls">
+        <button id="play" type="button" disabled>播放联动</button>
+        <button id="reset" type="button" disabled>回到初态</button>
+      </div>
+      <label for="offset">手动转动 F（−25° 至 +25°）</label>
+      <input id="offset" type="range" min="-25" max="25" step="0.1" value="0" disabled>
+      <p><small>播放在初态两侧往返。操作图形时自动暂停；可旋转三维视角。</small></p>
+      <p><a href="../geogebra/5x5%20nonplanar%20folding.ggb" download>下载 5×5 GeoGebra 文件</a></p>
+    </aside>
+  </main>
+  <script>
+    const referenceAngle = Math.acos(-1 / Math.sqrt(3));
+    const slider = document.getElementById('offset');
+    const playButton = document.getElementById('play');
+    const resetButton = document.getElementById('reset');
+    const manifestPromise = fetch('../geogebra/5x5%20nonplanar%20folding.json').then(response => {
+      if (!response.ok) throw new Error('无法读取模型信息');
+      return response.json();
+    });
+    let api;
+    let manifest;
+    let playing = false;
+    let animationFrame;
+    let refreshQueued = false;
+    function currentOffset() {
+      const angle = Math.atan2(api.getZcoord('F'), api.getXcoord('F')) - referenceAngle;
+      return Math.atan2(Math.sin(angle), Math.cos(angle)) * 180 / Math.PI;
+    }
+    function pause() {
+      playing = false;
+      cancelAnimationFrame(animationFrame);
+      playButton.textContent = '播放联动';
+    }
+    function refresh() {
+      refreshQueued = false;
+      const required = [...manifest.grid_labels.flat(), ...manifest.triangle_labels];
+      const missing = required.filter(label => !api.isDefined(label));
+      document.getElementById('state').textContent = missing.length ? '部分构造暂无定义，请回到初态' : '25 个面全部已加载';
+      document.getElementById('definition').textContent = api.getCommandString('F', false);
+      document.getElementById('movable').textContent = api.isMoveable('F') ? '是，仍在原圆上' : '否';
+      const offset = currentOffset();
+      document.getElementById('angle').textContent = `${offset >= 0 ? '+' : ''}${offset.toFixed(1)}°`;
+      slider.value = offset;
+      if (missing.length && playing) pause();
+    }
+    function queueRefresh() {
+      if (!refreshQueued) {
+        refreshQueued = true;
+        requestAnimationFrame(refresh);
+      }
+    }
+    function moveF(offset) {
+      const angle = referenceAngle + offset * Math.PI / 180;
+      api.setCoords('F', Math.sqrt(3) * Math.cos(angle), 1, Math.sqrt(3) * Math.sin(angle));
+      queueRefresh();
+    }
+    slider.addEventListener('input', () => { pause(); moveF(Number(slider.value)); });
+    resetButton.addEventListener('click', () => { pause(); moveF(0); });
+    document.getElementById('applet').addEventListener('pointerdown', pause, true);
+    playButton.addEventListener('click', () => {
+      if (playing) { pause(); return; }
+      playing = true;
+      playButton.textContent = '暂停联动';
+      const startingOffset = currentOffset();
+      const amplitude = Math.min(25, Math.max(18, Math.abs(startingOffset)));
+      const phase = Math.asin(Math.max(-1, Math.min(1, startingOffset / amplitude)));
+      const startTime = performance.now();
+      let lastFrame = -Infinity;
+      function animate(now) {
+        if (!playing) return;
+        if (now - lastFrame >= 40) {
+          moveF(amplitude * Math.sin(phase + (now - startTime) * 2 * Math.PI / 12000));
+          lastFrame = now;
+        }
+        animationFrame = requestAnimationFrame(animate);
+      }
+      animationFrame = requestAnimationFrame(animate);
+    });
+    window.addEventListener('load', () => {
+      const container = document.getElementById('applet');
+      const applet = new GGBApplet({
+        appName: '3d', language: 'zh-CN', width: container.clientWidth,
+        height: Math.max(530, Math.min(740, innerHeight - 180)),
+        filename: '../geogebra/5x5%20nonplanar%20folding.ggb',
+        showToolBar: false, showMenuBar: false, showAlgebraInput: true,
+        async appletOnLoad(loadedApi) {
+          api = loadedApi;
+          try {
+            manifest = await manifestPromise;
+            api.registerUpdateListener(queueRefresh);
+            refresh();
+            playButton.disabled = resetButton.disabled = slider.disabled = false;
+          } catch (error) {
+            document.getElementById('state').textContent = error.message;
+          }
+        }
+      }, true);
+      applet.inject('applet');
+    });
+  </script>
+</body>
+</html>

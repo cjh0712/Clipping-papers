@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+_probe.png
+chk_closed.png
+chk_flat.png
+chk_mid.png

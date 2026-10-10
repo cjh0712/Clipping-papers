@@ -1,41 +1,24 @@
 # Clipping-papers
 
-刚性折纸（rigid origami）实验代码，参考论文 *Flexible quadrilateral mesh of isogonal type in arbitrary size*。
+折纸模型、GeoGebra 文件与动画。项目文件保留在 [`clipping-papers/`](clipping-papers/) 中。
 
-## 3×3 折叠演示
+## GeoGebra
 
-当前模型由 9 个边长为 1 的面片组成：中心和四角是 60°/120° 菱形，其余四片是正方形。四角菱形旋转 90° 后与中心菱形保持相同方向，再通过正方形连接成空间铰接网格。
+`planar` / `nonplanar` 指面片是平面四边形 / 空间四边形。
 
-![3×3 菱形与正方形折叠动画](origami_grid3x3_rhombi_squares.gif)
+| 文件 | 说明 |
+| --- | --- |
+| [2x2 planar folding](clipping-papers/geogebra/2x2%20planar%20folding.ggb) | 原始平面面片折叠 |
+| [2x2 nonplanar folding](clipping-papers/geogebra/2x2%20nonplanar%20folding.ggb) | 原始空间四边形折叠 |
+| [5x5 planar folding](clipping-papers/geogebra/5x5%20planar%20folding.ggb) | 平面面片的 5×5 扩展 |
+| [5x5 nonplanar folding](clipping-papers/geogebra/5x5%20nonplanar%20folding.ggb) | 空间四边形几何联动，新增面片不保证刚性 |
+| [5x5 nonplanar static](clipping-papers/geogebra/5x5%20nonplanar%20static.ggb) | 已确认的静态拼接参照 |
 
-左侧显示初始拼接，右侧显示折叠过程。蓝色为菱形，橙色为正方形，虚线标出菱形长对角线。模型在折叠过程中保持：
+下载 `.ggb` 后用 GeoGebra 3D 打开；折叠文件可拖动 F。最新联动版 `5x5 nonplanar folding.ggb` 已开启左侧代数栏和输入栏。
 
-- 9 个面片刚性不变，12 条公共边始终重合；
-- 五个菱形消除空间倾斜后方向一致；
-- 四个内部交点的凹凸关系不发生翻转；
-- 初态和末态均为非共面结构，当前分支具有一个局部自由度。
+## 动画与代码
 
-## 运行
-
-```bash
-pip install numpy matplotlib pillow
-python origami_grid3x3.py
-python origami_grid3x3.py --check-only
-python origami_grid3x3.py --audit-branches
-```
-
-自定义折叠角度和帧数：
-
-```bash
-python origami_grid3x3.py --start-angle 60 --end-angle 120 --steps 80 --output custom_fold.gif
-```
-
-## 输出
-
-- `origami_grid3x3_rhombi_squares.gif`：折叠动画；
-- `origami_grid3x3_rhombi_squares_assembled.png`：初始拼接；
-- `origami_grid3x3_rhombi_squares.png`：默认折叠末态。
-
-空间拼接参考：[GeoGebra 示意图](https://www.geogebra.org/calculator/hsd9hkzw)。
-
-论文：Y. Liu, J. Cheng, *Flexible quadrilateral mesh of isogonal type in arbitrary size*, ACM Transactions on Graphics 37(4).
+- [3×3 菱形与正方形动画](clipping-papers/animations/origami_grid3x3_rhombi_squares.gif)
+- [5×5 菱形与正方形动画](clipping-papers/animations/origami_grid5x5_rhombi_squares.gif)
+- [全部动画](clipping-papers/animations/) · [静态图和网页预览](clipping-papers/previews/)
+- 原有 Python 代码与参考论文保留在 [`clipping-papers/`](clipping-papers/)，已移除弃用候选和临时检查输出。
