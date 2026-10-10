@@ -1,24 +1,21 @@
 # Clipping-papers
 
-折纸模型、GeoGebra 文件与动画。项目文件保留在 [`clipping-papers/`](clipping-papers/) 中。
+折纸模型与动画。`planar` 表示平面面片，`nonplanar` 表示空间四边形面片。
 
 ## GeoGebra
 
-`planar` / `nonplanar` 指面片是平面四边形 / 空间四边形。
+- [2x2 planar folding](geogebra/2x2%20planar%20folding.ggb)：原始平面面片折叠。
+- [2x2 nonplanar folding](geogebra/2x2%20nonplanar%20folding.ggb)：原始空间四边形折叠。
+- [5x5 planar folding](geogebra/5x5%20planar%20folding.ggb)：平面面片的 5×5 扩展。
+- [5x5 nonplanar folding](geogebra/5x5%20nonplanar%20folding.ggb)：25 面共点共边的几何联动，新增面片不保证刚性。
+- [5x5 nonplanar static](geogebra/5x5%20nonplanar%20static.ggb)：已确认的静态拼接参照。
 
-| 文件 | 说明 |
-| --- | --- |
-| [2x2 planar folding](clipping-papers/geogebra/2x2%20planar%20folding.ggb) | 原始平面面片折叠 |
-| [2x2 nonplanar folding](clipping-papers/geogebra/2x2%20nonplanar%20folding.ggb) | 原始空间四边形折叠 |
-| [5x5 planar folding](clipping-papers/geogebra/5x5%20planar%20folding.ggb) | 平面面片的 5×5 扩展 |
-| [5x5 nonplanar folding](clipping-papers/geogebra/5x5%20nonplanar%20folding.ggb) | 空间四边形几何联动，新增面片不保证刚性 |
-| [5x5 nonplanar static](clipping-papers/geogebra/5x5%20nonplanar%20static.ggb) | 已确认的静态拼接参照 |
+用 GeoGebra 3D 打开 `.ggb`，拖动 F。`static` 文件只用于查看初态。
 
-下载 `.ggb` 后用 GeoGebra 3D 打开；折叠文件可拖动 F。最新联动版 `5x5 nonplanar folding.ggb` 已开启左侧代数栏和输入栏。
+## 动画与预览
 
-## 动画与代码
+- [3×3 动画](animations/origami_grid3x3_rhombi_squares.gif) · [5×5 动画](animations/origami_grid5x5_rhombi_squares.gif) · [全部动画](animations/)
+- [5×5 平面面片静态图](previews/5x5%20planar%20folding.png) · [5×5 空间面片静态图](previews/5x5%20nonplanar%20static.png)
+- 网页联动预览：在本目录运行 `python -m http.server 8767 --bind 127.0.0.1`，打开 [本地预览](http://127.0.0.1:8767/previews/5x5%20nonplanar%20folding.html)。
 
-- [3×3 菱形与正方形动画](clipping-papers/animations/origami_grid3x3_rhombi_squares.gif)
-- [5×5 菱形与正方形动画](clipping-papers/animations/origami_grid5x5_rhombi_squares.gif)
-- [全部动画](clipping-papers/animations/) · [静态图和网页预览](clipping-papers/previews/)
-- 原有 Python 代码与参考论文保留在 [`clipping-papers/`](clipping-papers/)，已移除弃用候选和临时检查输出。
+原有 Python 代码与 `ToG.pdf` 保留；仅更新近期 GeoGebra 脚本的默认文件路径。弃用候选、试接示例及临时检查输出不再作为成果保留。
