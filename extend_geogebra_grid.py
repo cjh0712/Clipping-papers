@@ -149,7 +149,7 @@ def preview(vertices, output):
     return packed.getvalue()
 
 
-def extend(source, output):
+def extend(source, output, preview_output=None):
     if source.resolve() == output.resolve():
         raise ValueError('The output must be a new file, separate from the supplied 2x2.')
     with ZipFile(source) as archive:
@@ -163,6 +163,8 @@ def extend(source, output):
     vertices = validate(root, points)
     original_definitions = [ET.tostring(node) for node in construction if node.tag in ('expression', 'command')]
     construction.set('title', '5x5 planar - original circle driver')
+    root.find('kernel/algebraStyle').set('val', '3')
+    root.find('algebraView/mode').set('val', '3')
     labels = {}
     for row in range(6):
         for column in range(6):
@@ -178,7 +180,7 @@ def extend(source, output):
             element.find('show').set('object', 'false')
             element.find('show').set('label', 'false')
             element.find('coords').attrib.update(dict(zip(('x', 'y', 'z'), map(str, vertices[location]))))
-            ET.SubElement(element, 'auxiliary', val='true')
+            ET.SubElement(element, 'auxiliary', val='false')
             construction.append(element)
     for row in range(SIZE):
         for column in range(SIZE):
@@ -220,7 +222,7 @@ def extend(source, output):
                             if node.tag in ('expression', 'command')][:len(original_definitions)]
     assert retained_definitions == original_definitions
     contents['geogebra.xml'] = ET.tostring(root, encoding='utf-8', xml_declaration=True)
-    contents['geogebra_thumbnail.png'] = preview(vertices, output.with_suffix('.png'))
+    contents['geogebra_thumbnail.png'] = preview(vertices, preview_output or output.with_suffix('.png'))
     with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
         for name, content in contents.items():
             archive.writestr(name, content)
@@ -231,8 +233,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('--output', type=Path, default=Path(__file__).parent / 'geogebra' / '5x5 planar folding.ggb')
+    parser.add_argument('--preview-output', type=Path, help='Optional location for the static PNG preview.')
     args = parser.parse_args()
-    extend(args.source, args.output)
+    extend(args.source, args.output, args.preview_output)
 
 
 if __name__ == '__main__':

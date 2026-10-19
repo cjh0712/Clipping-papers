@@ -1,0 +1,77 @@
+{
+  "model": "Five rigid skew strips, four alternating straight hinges, 25 nonplanar cells",
+  "faces": 25,
+  "vertices": 36,
+  "whole_edge_connections": 40,
+  "moving_connections": 20,
+  "fixed_angle_connections": 20,
+  "straight_hinge_lines": 4,
+  "congruence_classes_including_reflections": [
+    [
+      1,
+      5,
+      6,
+      10,
+      11,
+      15,
+      16,
+      20,
+      21,
+      25
+    ],
+    [
+      2,
+      4,
+      7,
+      9,
+      12,
+      14,
+      17,
+      19,
+      22,
+      24
+    ],
+    [
+      3,
+      8,
+      13,
+      18,
+      23
+    ]
+  ],
+  "all_faces_congruent": false,
+  "all_faces_nonplanar": true,
+  "rigid_by_exact_rotation_construction": true,
+  "internal_diagonals_are_not_hinges": true,
+  "driver_interval_degrees": [
+    30.0,
+    150.0
+  ],
+  "strip_pitch": 2.0,
+  "column_pitch": 0.8,
+  "base_boundary_twist_degrees": 12.0,
+  "sampled_configurations": 1201,
+  "maximum_errors": {
+    "pair_distance": 4.551914400963142e-15,
+    "signed_six_volume": 3.164135620181696e-15,
+    "fixed_strip": 0.0,
+    "signature_identity": 5.773159728050814e-15
+  },
+  "absolute_face_signed_six_volume": 0.26612696424673216,
+  "nonzero_vertex_signatures": 32,
+  "identically_zero_signatures": 32,
+  "vertex_signature_nonzero_signs_preserved_by_analytic_bound": true,
+  "minimum_sampled_absolute_nonzero_signature": 0.8836829567919594,
+  "initial_xyz_span": [
+    9.856855205377625,
+    4.273914225530142,
+    2.5118191463209736
+  ],
+  "final_xyz_span": [
+    2.9129132822415875,
+    4.047395427017404,
+    3.8064884905316205
+  ],
+  "x_span_contraction_percent": 70.44784343943307,
+  "scope": "New geometry, not the original model. 20 of 40 shared edges move; 20 are fixed. Not flat folding."
+}

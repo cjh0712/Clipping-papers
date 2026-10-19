@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>5×5 空间四边形 · 手风琴式刚性折叠</title>
+<style>
+body{margin:0;background:#f6f8fb;color:#213b50;font:15px/1.5 system-ui,sans-serif}
+header{padding:14px 22px}h1{font-size:22px;margin:0 0 5px}p{margin:5px 0}
+button{padding:6px 13px;margin:7px 6px 5px 0;border:1px solid #b9cbd9;border-radius:5px;background:white;color:inherit;cursor:pointer}
+#result{white-space:pre-wrap;font-size:13px}#applet{height:660px;background:white}
+.red{color:#bd4243}a{color:#305f87}
+</style>
+<header>
+<h1>5×5 空间四边形 · 手风琴式刚性折叠</h1>
+<p>25 个面组成 5 条刚性带；3 类面片（镜像归同类），全部非平面。<span class="red">20 段红色共边可动</span>，另外 20 段共边夹角固定。</p>
+<p>中央刚性带固定；初态到收拢位置，横向跨度减少约 70.4%。内部对角线不是折痕。左侧保留全部点、线、面及旋转构造。</p>
+<button id="initial" disabled>初态</button><button id="middle" disabled>折叠一半</button><button id="folded" disabled>收拢</button>
+<button id="play" disabled>播放 / 暂停</button><button id="verify" disabled>核验刚性</button>
+<a href="../geogebra/5x5%20nonplanar%20accordion%20folding.ggb" download>下载 GeoGebra 文件</a>
+<div id="result">正在加载 GeoGebra 构造…</div>
+</header>
+<div id="applet"></div>
+<script src="https://www.geogebra.org/apps/deployggb.js"></script>
+<script>
+let api;
+let playing=false;
+let verifying=false;
+let initialSpan;
+const minimumFold=30;
+const maximumFold=150;
+const base=Array.from({length:6},(_,row)=>Array.from({length:6},(_,column)=>[
+  2*(row-2),.8*(column-2.5)*Math.cos(Math.PI/30),.8*(column-2.5)*Math.sin(Math.PI/30)*(-1)**row]));
+function distance(first,second) {
+  return Math.hypot(...first.map((value,axis)=>value-second[axis]));
+}
+function corners(grid,row,column) {
+  return [grid[row][column],grid[row][column+1],grid[row+1][column+1],grid[row+1][column]];
+}
+function determinant(points) {
+  const [first,second,third]=points.slice(1).map(point=>point.map((value,axis)=>value-points[0][axis]));
+  return first[0]*(second[1]*third[2]-second[2]*third[1])-first[1]*(second[0]*third[2]-second[2]*third[0])+first[2]*(second[0]*third[1]-second[1]*third[0]);
+}
+function readGrid() {
+  return Array.from({length:6},(_,row)=>Array.from({length:6},(_,column)=>{
+    const label=`P_{${row}${column}}`;
+    return [api.getXcoord(label),api.getYcoord(label),api.getZcoord(label)];
+  }));
+}
+function measure(grid) {
+  let distanceError=0,volumeError=0;
+  for(let row=0;row<5;row++) {
+    for(let column=0;column<5;column++) {
+      const current=corners(grid,row,column),reference=corners(base,row,column);
+      for(let first=0;first<4;first++) {
+        for(let second=first+1;second<4;second++) {
+          distanceError=Math.max(distanceError,Math.abs(distance(current[first],current[second])-distance(reference[first],reference[second])));
+        }
+      }
+      volumeError=Math.max(volumeError,Math.abs(determinant(current)-determinant(reference)));
+    }
+  }
+  return {distanceError,volumeError};
+}
+function span(grid) {
+  const values=grid.flat().map(point=>point[0]);
+  return Math.max(...values)-Math.min(...values);
+}
+function refresh() {
+  if(verifying) return;
+  const grid=readGrid();
+  const contraction=100*(1-span(grid)/initialSpan);
+  document.getElementById('result').textContent=`参数 ${api.getValue('fold').toFixed(1)}°；横向缩短 ${contraction.toFixed(1)}%；25 面不变形，40 条公共边不分离。`;
+}
+function showPose(value) {
+  api.stopAnimation();playing=false;
+  api.setValue('fold',value);
+  refresh();
+}
+document.getElementById('initial').onclick=()=>showPose(minimumFold);
+document.getElementById('middle').onclick=()=>showPose((minimumFold+maximumFold)/2);
+document.getElementById('folded').onclick=()=>showPose(maximumFold);
+document.getElementById('play').onclick=()=>{
+  playing=!playing;
+  api.setAnimating('fold',playing);
+  if(playing) api.startAnimation(); else api.stopAnimation();
+  refresh();
+};
+document.getElementById('verify').onclick=()=>{
+  api.stopAnimation();playing=false;verifying=true;
+  let maxDistance=0,maxVolume=0,undefinedPoints=0,maxAnchorError=0;
+  for(let step=0;step<=180;step++) {
+    api.setValue('fold',minimumFold+(maximumFold-minimumFold)*step/180);
+    const grid=readGrid();
+    undefinedPoints+=grid.flat().filter(point=>point.some(value=>!Number.isFinite(value))).length;
+    const result=measure(grid);
+    maxDistance=Math.max(maxDistance,result.distanceError);
+    maxVolume=Math.max(maxVolume,result.volumeError);
+    for(const row of [2,3]) for(let column=0;column<6;column++) {
+      maxAnchorError=Math.max(maxAnchorError,distance(grid[row][column],base[row][column]));
+    }
+  }
+  api.setValue('fold',minimumFold);
+  const labels=Array.from(api.getAllObjectNames());
+  const missing=labels.filter(label=>!api.isIndependent(label)&&!api.getCommandString(label,false));
+  const undefinedObjects=labels.filter(label=>!api.isDefined(label));
+  document.getElementById('result').textContent=JSON.stringify({
+    samples:181,range_degrees:[minimumFold,maximumFold],faces:25,whole_edge_connections:40,
+    moving_connections:20,fixed_connections:20,max_distance_error:maxDistance,
+    max_nonplanarity_determinant_error:maxVolume,max_fixed_strip_error:maxAnchorError,
+    undefined_point_samples:undefinedPoints,undefined_objects:undefinedObjects,
+    objects_without_definition:missing,total_objects:labels.length,
+    note:'刚性来自精确 Rotate 构造，采样是复核；此按钮不检查穿插。'},null,2);
+  verifying=false;
+};
+new GGBApplet({appName:'3d',language:'zh-CN',width:document.getElementById('applet').clientWidth,height:660,
+  filename:'../geogebra/5x5%20nonplanar%20accordion%20folding.ggb',
+  showToolBar:false,showMenuBar:true,showAlgebraInput:true,
+  appletOnLoad(loadedApi){
+    api=loadedApi;
+    initialSpan=span(readGrid());
+    api.registerObjectUpdateListener('fold',refresh);
+    for(const button of document.querySelectorAll('button')) button.disabled=false;
+    showPose(minimumFold);
+  }
+},true).inject('applet');
+</script>
+</html>

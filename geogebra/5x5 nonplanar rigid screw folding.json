@@ -1,0 +1,94 @@
+{
+  "model": "Exact congruent skew rhombi on a variable cylinder; commuting screw motions",
+  "face_count": 25,
+  "vertices": 36,
+  "whole_edge_hinges": 40,
+  "all_faces_congruent": true,
+  "all_faces_nonplanar": true,
+  "each_face_rigid_by_construction": true,
+  "internal_diagonal_is_not_a_hinge": true,
+  "driver_interval_degrees": [
+    0,
+    45.0
+  ],
+  "sampled_configurations": 901,
+  "side_length_exact": "sqrt(126)/5",
+  "diagonal_lengths_exact": [
+    4,
+    2
+  ],
+  "six_squared_distances_in_order_AB_BC_CD_DA_AC_BD": [
+    "126/25",
+    "126/25",
+    "126/25",
+    "126/25",
+    "16",
+    "4"
+  ],
+  "face_signed_six_volume_exact": "8/5",
+  "max_pair_distance_error": 4.440892098500626e-15,
+  "max_anchor_coordinate_error": 2.4980018054066022e-15,
+  "max_signed_six_volume_error": 2.020605904817785e-14,
+  "all_16_vertex_signatures_preserved_at_samples": true,
+  "vertex_signature_exact_lower_bound": "120/227",
+  "vertex_signatures_preserved_on_full_interval_by_proof": true,
+  "displayed_triangle_surface_embedded_on_full_interval_by_proof": true,
+  "proof_file": "proofs/5x5 nonplanar rigid screw folding.txt",
+  "minimum_absolute_vertex_signature": 0.528634361233476,
+  "all_40_hinges_move": true,
+  "min_hinge_angle_change_degrees": 8.502817965244889,
+  "max_hinge_angle_change_degrees": 24.82549299260963,
+  "max_vertex_displacement": 2.496122698481243,
+  "geometry_changed_from_previous_model": true,
+  "not_claimed": "No claim of flat folding, original initial pose, or unchanged original driver circle.",
+  "grid_labels": [
+    [
+      "P_{00}",
+      "P_{01}",
+      "P_{02}",
+      "P_{03}",
+      "P_{04}",
+      "P_{05}"
+    ],
+    [
+      "P_{10}",
+      "P_{11}",
+      "P_{12}",
+      "P_{13}",
+      "P_{14}",
+      "P_{15}"
+    ],
+    [
+      "P_{20}",
+      "P_{21}",
+      "P_{22}",
+      "P_{23}",
+      "P_{24}",
+      "P_{25}"
+    ],
+    [
+      "P_{30}",
+      "P_{31}",
+      "P_{32}",
+      "P_{33}",
+      "P_{34}",
+      "P_{35}"
+    ],
+    [
+      "P_{40}",
+      "P_{41}",
+      "P_{42}",
+      "P_{43}",
+      "P_{44}",
+      "P_{45}"
+    ],
+    [
+      "P_{50}",
+      "P_{51}",
+      "P_{52}",
+      "P_{53}",
+      "P_{54}",
+      "P_{55}"
+    ]
+  ]
+}

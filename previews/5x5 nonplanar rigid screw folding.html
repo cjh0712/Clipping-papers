@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>5×5 全等空间四边形 · 刚性折叠</title>
+<style>
+body{margin:0;background:#f6f8fb;color:#213b50;font:15px/1.5 system-ui,sans-serif}
+header{padding:14px 22px}h1{font-size:22px;margin:0 0 5px}p{margin:5px 0}
+button{padding:6px 13px;margin:7px 6px 5px 0;border:1px solid #b9cbd9;border-radius:5px;background:white;color:inherit;cursor:pointer}
+#result{white-space:pre-wrap;font-size:13px}#applet{height:680px;background:white}
+</style>
+<header>
+<h1>5×5 全等空间四边形 · 刚性折叠</h1>
+<p>25 个面均为刚性空间四边形；中央面固定，40 条整边相连。蓝黄仅用于区分相邻面。</p>
+<button id="initial" disabled>初态</button><button id="middle" disabled>折叠一半</button><button id="folded" disabled>最大演示位置</button>
+<button id="play" disabled>播放 / 暂停</button><button id="verify" disabled>核验刚性</button>
+<div id="result">正在加载完整 GeoGebra 构造…</div>
+</header>
+<div id="applet"></div>
+<script src="https://www.geogebra.org/apps/deployggb.js"></script>
+<script>
+let api;
+let playing = false;
+function position(label) {
+  return [api.getXcoord(label),api.getYcoord(label),api.getZcoord(label)];
+}
+function readGrid() {
+  return Array.from({length:6},(_,row)=>Array.from({length:6},(_,column)=>position(`P_{${row}${column}}`)));
+}
+function measure(grid) {
+  let largestError = 0;
+  let volumeError = 0;
+  for (let row=0;row<5;row++) {
+    for (let column=0;column<5;column++) {
+      const corners = [grid[row][column],grid[row][column+1],grid[row+1][column+1],grid[row+1][column]];
+      for (let first=0;first<4;first++) {
+        for (let second=first+1;second<4;second++) {
+          const expected = first===0&&second===2 ? 4 : first===1&&second===3 ? 2 : Math.sqrt(126)/5;
+          const distance = Math.hypot(...corners[first].map((value,axis)=>value-corners[second][axis]));
+          largestError = Math.max(largestError,Math.abs(distance-expected));
+        }
+      }
+      const vectors = corners.slice(1).map(point=>point.map((value,axis)=>value-corners[0][axis]));
+      const first=vectors[0],second=vectors[1],third=vectors[2];
+      const volume = first[0]*(second[1]*third[2]-second[2]*third[1])-first[1]*(second[0]*third[2]-second[2]*third[0])+first[2]*(second[0]*third[1]-second[1]*third[0]);
+      volumeError=Math.max(volumeError,Math.abs(volume-8/5));
+    }
+  }
+  return {largestError,volumeError};
+}
+function showPose(value) {
+  api.stopAnimation(); playing=false;
+  api.setValue('fold',value);
+  const result=measure(readGrid());
+  document.getElementById('result').textContent=`折叠参数 ${value}°；所有面六个距离的最大误差：${result.largestError.toExponential(3)}。面片不共面且不变形。`;
+}
+document.getElementById('initial').onclick=()=>showPose(0);
+document.getElementById('middle').onclick=()=>showPose(22.5);
+document.getElementById('folded').onclick=()=>showPose(45);
+document.getElementById('play').onclick=()=>{
+  playing=!playing;
+  api.setAnimating('fold',playing);
+  if (playing) api.startAnimation(); else api.stopAnimation();
+  document.getElementById('result').textContent=playing ? '正在播放：25 个面保持刚性，中央面固定。' : `已暂停，折叠参数 ${api.getValue('fold').toFixed(1)}°。`;
+};
+document.getElementById('verify').onclick=()=>{
+  api.stopAnimation();playing=false;
+  let maxDistance=0,maxVolume=0;
+  let undefinedPoints=0;
+  for (let step=0;step<=180;step++) {
+    api.setValue('fold',step/4);
+    const grid=readGrid();
+    undefinedPoints+=grid.flat().filter(point=>point.some(value=>!Number.isFinite(value))).length;
+    const result=measure(grid);
+    maxDistance=Math.max(maxDistance,result.largestError);
+    maxVolume=Math.max(maxVolume,result.volumeError);
+  }
+  api.setValue('fold',0);
+  const labels=Array.from(api.getAllObjectNames());
+  const missing=labels.filter(label=>!api.isIndependent(label)&&!api.getCommandString(label,false));
+  document.getElementById('result').textContent=JSON.stringify({samples:181,range_degrees:[0,45],faces:25,whole_edge_hinges:40,
+    max_distance_error:maxDistance,max_nonplanarity_determinant_error:maxVolume,undefined_point_samples:undefinedPoints,
+    objects_without_definition:missing,total_objects:labels.length},null,2);
+};
+new GGBApplet({appName:'3d',language:'zh-CN',width:document.getElementById('applet').clientWidth,height:680,
+  filename:'../geogebra/5x5%20nonplanar%20rigid%20screw%20folding.ggb',
+  showToolBar:false,showMenuBar:true,showAlgebraInput:true,
+  appletOnLoad(loadedApi){
+    api=loadedApi;
+    api.registerObjectUpdateListener('fold',()=>{
+      document.getElementById('result').textContent=`折叠参数 ${api.getValue('fold').toFixed(1)}°；25 个面保持刚性，中央面固定，40 条公共边不分离。`;
+    });
+    for (const button of document.querySelectorAll('button')) button.disabled=false;
+    showPose(0);
+  }
+},true).inject('applet');
+</script>
+</html>

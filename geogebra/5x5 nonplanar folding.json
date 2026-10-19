@@ -1,5 +1,5 @@
 {
-  "status": "geometric_linkage_not_a_verified_rigid_fold",
+  "status": "geometric_linkage_with_measured_panel_deformation",
   "source_definitions_preserved": 48,
   "source_sha256": "d7759a32d7ab10e5aa331c5d8a2d44e32feda496bf8a3346f75a6a97ff27633a",
   "initial_grid_matches_approved_static_file": true,
@@ -117,6 +117,35 @@
   "new_grid_points": 27,
   "F_definition": "Original Point(e); original Circle(E, sqrt(3), d)",
   "rigid_constraints_applied_to_extension": false,
+  "rigidity_audit": {
+    "date": "2026-10-16",
+    "method": "GeoGebra native coordinates: four boundary lengths and both diagonals of every quadrilateral; cross-checked against the GGB Midpoint/Mirror definitions",
+    "source_definitions_unchanged": 48,
+    "extension_is_whole_panel_rigid_copy": false,
+    "driver": "F = Point(e); P is a dependent intersection, not the driver",
+    "reference_F": [-1, 1, 1.4142135623730951],
+    "sample_count": 101,
+    "offset_range_degrees": [-25, 25],
+    "undefined_grid_point_samples": 0,
+    "deformation_tolerance": 1e-8,
+    "original_four_face_max_distance_change": 1.7763568394002505e-15,
+    "deformed_extension_faces": 21,
+    "deformed_yellow_faces": 10,
+    "deformed_blue_faces": 11,
+    "maximum_distance_change": 1.4755686628774183,
+    "point_and_segment_definitions_checked": 313,
+    "missing_dependent_point_and_segment_definitions": [],
+    "algebra_visibility_fix_only": "27 grid points and 18 midpoints changed from auxiliary to non-auxiliary; all construction commands and coordinates retained",
+    "yellow_example": {
+      "row_one_based": 1,
+      "column_one_based": 2,
+      "vertices_in_order": ["W_{01}", "W_{02}", "D", "O"],
+      "distance_order": ["W_{01}-W_{02}", "W_{02}-D", "D-O", "O-W_{01}", "W_{01}-D", "W_{02}-O"],
+      "initial_distances": [2, 2, 2, 2, 2.828427125, 2],
+      "distances_at_plus_10_degrees": [2.029394026, 2, 2, 2, 3.026204354, 1.720618297]
+    },
+    "scope": "Rejects rigidity of this midpoint/reflection extension only; does not prove that every possible 5x5 construction is impossible"
+  },
   "initial_grid_coordinates": [
     [
       [

@@ -49,7 +49,7 @@ def build(source, reference_file, output):
         for child in list(point):
             if child.tag in ('fixed', 'animation', 'auxiliary', 'caption'):
                 point.remove(child)
-        ET.SubElement(point, 'auxiliary', val='true')
+        ET.SubElement(point, 'auxiliary', val='false')
         construction.append(point)
         positions[label] = position
         generated_points.append(label)
@@ -136,6 +136,8 @@ def build(source, reference_file, output):
     camera.attrib.update(scale='43', xAngle='45', zAngle='45')
     for view in root.findall('gui/perspectives/perspective/views/view'):
         view.set('visible', str(view.get('id') in ('2', '512')).lower())
+    root.find('kernel/algebraStyle').set('val', '3')
+    root.find('algebraView/mode').set('val', '3')
     construction.set('title', '5x5 shared-vertex geometric linkage - no rigid-panel constraints')
     contents['geogebra.xml'] = ET.tostring(root, encoding='utf-8', xml_declaration=True)
     contents.pop('geogebra_thumbnail.png', None)
